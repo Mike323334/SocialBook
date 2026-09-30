@@ -84,3 +84,4 @@ py -m pytest backend\tests
 ## Architecture notes
 
 See [architecture](docs/architecture.md), [API](docs/api.md), [memory model](docs/memory.md), and [privacy](docs/privacy.md).# bookAndChat
+# bookAndChat
