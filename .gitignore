@@ -1,0 +1,14 @@
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+backend/.env
+backend/data/
+*.sqlite3
+.env
+.DS_Store

@@ -1,0 +1,21 @@
+services:
+  api:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-}
+      DATABASE_URL: ${DATABASE_URL:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      SUPABASE_DATABASE_URL: ${SUPABASE_DATABASE_URL:-}
+      ANALYTICS_DB_PATH: /data/analytics.sqlite3
+      ANALYTICS_ADMIN_TOKEN: ${ANALYTICS_ADMIN_TOKEN:-}
+    volumes:
+      - analytics_data:/data
+    restart: unless-stopped
+
+volumes:
+  analytics_data:
