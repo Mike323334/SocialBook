@@ -1,7 +1,5 @@
-
 import { useEffect, useState } from 'react'
 import { database } from '../../db/database'
-import { generateEmbedding } from './embeddings'
 import {
   loadSemanticData,
   searchLoadedSemanticData,
@@ -12,9 +10,8 @@ import {
 } from './comparisonAnalyzer'
 
 /*
- * Lower threshold = more semantic candidates.
+ * Lower value = more semantic candidates.
  *
- * We let local embeddings favor recall.
  * Groq performs the final meaningfulness check.
  */
 const SEMANTIC_MIN_SIMILARITY = 0.30
@@ -26,18 +23,24 @@ const SEMANTIC_MIN_SIMILARITY = 0.30
 const CANDIDATES_PER_CHUNK = 8
 
 /*
- * Maximum local candidates retained
- * for each comparison book.
+ * Maximum candidates retained for each
+ * comparison book.
  */
 const LOCAL_CANDIDATES_PER_BOOK = 100
 
 /*
- * Maximum number of candidates sent to Groq.
- *
- * Keep this controlled because Groq has
- * token-per-day limits.
+ * Maximum candidates sent to Groq.
  */
 const MAX_GROQ_ANALYSES = 40
+
+/*
+ * How often we yield control back to the
+ * browser during semantic comparison.
+ *
+ * This prevents the page from becoming
+ * completely unresponsive.
+ */
+const YIELD_EVERY_CHUNKS = 5
 
 interface CandidateRelationship {
   queryChunkId: string
@@ -66,15 +69,15 @@ interface RelationshipResult
 }
 
 /*
- * Split:
- *
- * "Exploitology: Web Apps Exploits"
- *
- * into:
- *
- * title = "Exploitology"
- * subtitle = "Web Apps Exploits"
+ * Give the browser a chance to process UI
+ * events and repaint.
  */
+function yieldToBrowser(): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, 0)
+  })
+}
+
 function getBookTitleParts(title: string) {
   const separatorIndex =
     title.indexOf(':')
@@ -144,17 +147,13 @@ export default function EmbeddingTest() {
   const [results, setResults] =
     useState<RelationshipResult[]>([])
 
-  /*
-   * Which relationship bubble is currently
-   * expanded.
-   */
   const [
     expandedRelationship,
     setExpandedRelationship,
   ] = useState<string | null>(null)
 
   /*
-   * Load books when the component mounts.
+   * Load books.
    */
   useEffect(() => {
     async function loadBooks() {
@@ -178,12 +177,12 @@ export default function EmbeddingTest() {
 
     try {
       /*
-       * ============================================
+       * ==========================================
        * LOAD SELECTED BOOK
-       * ============================================
+       * ==========================================
        */
       setStatus(
-        'Loading semantic memory...',
+        'Loading selected book...',
       )
 
       const selectedBook =
@@ -198,9 +197,9 @@ export default function EmbeddingTest() {
       }
 
       /*
-       * ============================================
+       * ==========================================
        * FIND OTHER BOOKS
-       * ============================================
+       * ==========================================
        */
       const allDocuments =
         await database.documents.toArray()
@@ -221,24 +220,29 @@ export default function EmbeddingTest() {
       }
 
       /*
-       * ============================================
-       * LOAD SEMANTIC DATA
-       * ============================================
+       * ==========================================
+       * LOAD EXISTING EMBEDDINGS
+       * ==========================================
        *
-       * Embeddings, chunks and documents are
-       * loaded once.
+       * IMPORTANT:
+       *
+       * We DO NOT call generateEmbedding()
+       * during comparison anymore.
+       *
+       * The embeddings already stored in
+       * IndexedDB are reused.
        */
       setStatus(
-        'Loading embeddings and passages...',
+        'Loading stored embeddings...',
       )
 
       const semanticData =
         await loadSemanticData()
 
       /*
-       * ============================================
+       * ==========================================
        * LOAD SELECTED BOOK CHUNKS
-       * ============================================
+       * ==========================================
        */
       const queryChunks =
         await database.memoryChunks
@@ -255,17 +259,35 @@ export default function EmbeddingTest() {
       }
 
       /*
-       * ============================================
+       * ==========================================
+       * CREATE EMBEDDING LOOKUP
+       * ==========================================
+       *
+       * Embedding IDs are the same as chunk IDs.
+       *
+       * This lets us find the stored vector
+       * instantly instead of generating it again.
+       */
+      const embeddingByChunkId =
+        new Map<
+          string,
+          Float32Array
+        >()
+
+      for (
+        const embedding of
+        semanticData.embeddings
+      ) {
+        embeddingByChunkId.set(
+          embedding.id,
+          embedding.vector,
+        )
+      }
+
+      /*
+       * ==========================================
        * CANDIDATE BUCKETS
-       * ============================================
-       *
-       * Each comparison book gets its own bucket.
-       *
-       * Example:
-       *
-       * Book A → Book B
-       * Book A → Book C
-       * Book A → Book D
+       * ==========================================
        */
       const candidatesByBook =
         new Map<
@@ -281,16 +303,16 @@ export default function EmbeddingTest() {
       }
 
       /*
-       * ============================================
-       * STEP 1
-       *
+       * ==========================================
        * LOCAL SEMANTIC SEARCH
-       * ============================================
+       * ==========================================
        *
-       * This part does NOT call Groq.
+       * We reuse existing embeddings.
        *
-       * It searches the local embeddings.
+       * No Transformers.js model is called here.
        */
+      let chunksWithoutEmbeddings = 0
+
       for (
         let index = 0;
         index < queryChunks.length;
@@ -299,22 +321,47 @@ export default function EmbeddingTest() {
         const queryChunk =
           queryChunks[index]
 
-        setStatus(
-          `Finding semantic matches ${index + 1}/${queryChunks.length}...`,
-        )
-
         /*
-         * Generate embedding for the current
-         * passage.
+         * Get the embedding already stored
+         * in IndexedDB.
          */
         const queryEmbedding =
-          await generateEmbedding(
-            queryChunk.text,
+          embeddingByChunkId.get(
+            queryChunk.id,
           )
 
         /*
-         * Find the strongest semantic matches
-         * across the other books.
+         * This should normally never happen
+         * if indexing completed correctly.
+         */
+        if (!queryEmbedding) {
+          chunksWithoutEmbeddings += 1
+          continue
+        }
+
+        /*
+         * Only update the UI every few chunks.
+         *
+         * Updating React state for every chunk
+         * creates unnecessary work.
+         */
+        if (
+          index % YIELD_EVERY_CHUNKS ===
+          0
+        ) {
+          setStatus(
+            `Comparing passages ${index + 1}/${queryChunks.length}...`,
+          )
+
+          /*
+           * Give the browser time to repaint
+           * and process clicks/events.
+           */
+          await yieldToBrowser()
+        }
+
+        /*
+         * Search the already-loaded vectors.
          */
         const matches =
           searchLoadedSemanticData(
@@ -322,14 +369,14 @@ export default function EmbeddingTest() {
             semanticData,
             {
               /*
-               * Do not match the selected book
+               * Never compare the selected book
                * against itself.
                */
               excludeDocumentId:
                 selectedBookId,
 
               /*
-               * Get several candidates.
+               * Retrieve several candidates.
                */
               limit:
                 CANDIDATES_PER_CHUNK,
@@ -343,18 +390,10 @@ export default function EmbeddingTest() {
           )
 
         /*
-         * Put matches into the appropriate
-         * comparison-book bucket.
+         * Put matches into their respective
+         * comparison-book buckets.
          */
         for (const match of matches) {
-          if (
-            !candidatesByBook.has(
-              match.documentId,
-            )
-          ) {
-            continue
-          }
-
           const bucket =
             candidatesByBook.get(
               match.documentId,
@@ -365,11 +404,8 @@ export default function EmbeddingTest() {
           }
 
           /*
-           * Only remove an EXACT duplicate
+           * Only remove an exact duplicate
            * passage pair.
-           *
-           * We intentionally DO NOT use
-           * shared concepts for deduplication.
            */
           const duplicate =
             bucket.some(
@@ -425,12 +461,18 @@ export default function EmbeddingTest() {
         }
       }
 
+      if (
+        chunksWithoutEmbeddings > 0
+      ) {
+        console.warn(
+          `[Comparison] ${chunksWithoutEmbeddings} chunks did not have stored embeddings.`,
+        )
+      }
+
       /*
-       * ============================================
-       * STEP 2
-       *
-       * LOCAL RANKING
-       * ============================================
+       * ==========================================
+       * LOCAL CANDIDATE SELECTION
+       * ==========================================
        */
       const localCandidates: CandidateRelationship[] =
         []
@@ -452,7 +494,7 @@ export default function EmbeddingTest() {
 
         /*
          * Keep the strongest candidates
-         * for this particular book.
+         * for each individual book.
          */
         const selected =
           bucket.slice(
@@ -470,7 +512,7 @@ export default function EmbeddingTest() {
       }
 
       /*
-       * Sort all candidates globally.
+       * Sort all candidates by similarity.
        */
       localCandidates.sort(
         (a, b) =>
@@ -483,11 +525,9 @@ export default function EmbeddingTest() {
       )
 
       /*
-       * ============================================
-       * STEP 3
-       *
-       * SELECT CANDIDATES FOR GROQ
-       * ============================================
+       * ==========================================
+       * GROQ CANDIDATES
+       * ==========================================
        */
       const groqCandidates =
         localCandidates.slice(
@@ -500,15 +540,13 @@ export default function EmbeddingTest() {
       )
 
       setStatus(
-        `Found ${localCandidates.length} semantic candidates. Analyzing the best ${groqCandidates.length} with AI...`,
+        `Found ${localCandidates.length} semantic candidates. Analyzing ${groqCandidates.length} with AI...`,
       )
 
       /*
-       * ============================================
-       * STEP 4
-       *
+       * ==========================================
        * GROQ RELATIONSHIP ANALYSIS
-       * ============================================
+       * ==========================================
        */
       const finalResults:
         RelationshipResult[] =
@@ -557,8 +595,7 @@ export default function EmbeddingTest() {
             })
 
           /*
-           * Groq determined that the passages
-           * are not meaningfully related.
+           * Groq rejected the relationship.
            */
           if (!analysis.meaningful) {
             continue
@@ -591,11 +628,18 @@ export default function EmbeddingTest() {
           )
 
           /*
-           * Show each new relationship immediately.
+           * Display the new relationship
+           * immediately.
            */
           setResults([
             ...finalResults,
           ])
+
+          /*
+           * Give the browser time to render
+           * the new bubble.
+           */
+          await yieldToBrowser()
         } catch (error) {
           console.error(
             'Relationship analysis failed:',
@@ -603,7 +647,8 @@ export default function EmbeddingTest() {
           )
 
           /*
-           * Stop if Groq reports a rate limit.
+           * Stop gracefully if Groq rate
+           * limiting occurs.
            */
           if (
             error instanceof Error &&
@@ -621,8 +666,9 @@ export default function EmbeddingTest() {
       }
 
       /*
-       * Sort final relationships by semantic
-       * similarity.
+       * ==========================================
+       * FINAL RESULTS
+       * ==========================================
        */
       const sortedResults =
         [...finalResults].sort(
@@ -635,11 +681,6 @@ export default function EmbeddingTest() {
         sortedResults,
       )
 
-      /*
-       * ============================================
-       * FINAL STATUS
-       * ============================================
-       */
       if (sortedResults.length > 0) {
         setStatus(
           `Finished. Found ${sortedResults.length} meaningful relationships.`,
@@ -741,7 +782,7 @@ export default function EmbeddingTest() {
       )}
 
       {/* ==========================================
-          RELATIONSHIP BUBBLES
+          RESULTS
           ========================================== */}
       <div className="space-y-3">
         {results.map(result => {
@@ -782,11 +823,11 @@ export default function EmbeddingTest() {
                       : relationshipId,
                   )
                 }
-                className="w-full p-4 text-left transition"
+                className="w-full p-4 text-left transition hover:bg-gray-50"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    {/* Pages + similarity */}
+                    {/* Pages */}
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full border px-3 py-1 text-xs">
                         Page{' '}
@@ -817,7 +858,7 @@ export default function EmbeddingTest() {
                       </span>
                     </div>
 
-                    {/* Book names */}
+                    {/* Books */}
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       <div>
                         <div className="font-semibold">
@@ -848,13 +889,13 @@ export default function EmbeddingTest() {
                       </div>
                     </div>
 
-                    {/* Short relationship preview */}
+                    {/* Relationship */}
                     <p className="mt-3 line-clamp-2 text-sm text-gray-600">
                       {analysis.connection ||
                         analysis.explanation}
                     </p>
 
-                    {/* Shared concepts */}
+                    {/* Concepts */}
                     {analysis.sharedConcepts
                       .length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1">
@@ -878,7 +919,7 @@ export default function EmbeddingTest() {
                     )}
                   </div>
 
-                  {/* Expand button */}
+                  {/* Expand icon */}
                   <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-lg">
                     {expanded
                       ? '−'
@@ -888,11 +929,10 @@ export default function EmbeddingTest() {
               </button>
 
               {/* ==================================
-                  EXPANDED RELATIONSHIP
+                  EXPANDED BUBBLE
                   ================================== */}
               {expanded && (
                 <div className="border-t p-5">
-                  {/* Two passages */}
                   <div className="grid gap-6 md:grid-cols-2">
                     {/* BOOK A */}
                     <div className="rounded-xl border p-4">
@@ -945,7 +985,7 @@ export default function EmbeddingTest() {
                     </div>
                   </div>
 
-                  {/* AI explanation */}
+                  {/* AI ANALYSIS */}
                   <div className="mt-6 space-y-5 border-t pt-5">
                     <div>
                       <strong>
@@ -1019,7 +1059,6 @@ export default function EmbeddingTest() {
                       </p>
                     </div>
 
-                    {/* Shared concepts */}
                     {analysis.sharedConcepts
                       .length > 0 && (
                       <div>
@@ -1046,7 +1085,6 @@ export default function EmbeddingTest() {
                       </div>
                     )}
 
-                    {/* Similarity */}
                     <div className="text-xs text-gray-500">
                       Semantic similarity:{' '}
                       {(
@@ -1063,7 +1101,9 @@ export default function EmbeddingTest() {
         })}
       </div>
 
-      {/* No results */}
+      {/* ==========================================
+          EMPTY STATE
+          ========================================== */}
       {!loading &&
         results.length === 0 &&
         status.startsWith(

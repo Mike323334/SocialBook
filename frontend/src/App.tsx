@@ -1,3 +1,4 @@
+import EmbeddingTest from './features/memory/EmbeddingTest'
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
@@ -16,6 +17,8 @@ import { LibraryPage, ReaderPage } from './features/books/LibraryPage'
 import { database } from './db/database'
 import { trackAnalyticsEvent } from './features/analytics/analyticsClient'
 import { AccountPage } from './features/account/AccountPage'
+import { ReadingMemoryPage } from './features/memory/ReadingMemoryPage'
+import { NotesPage } from './features/notes/NotesPage'
 
 const navigation = [
   { label: 'Overview', to: '/', icon: Compass },
@@ -133,13 +136,44 @@ function App() {
           <span className="local-badge"><LockKeyhole size={13} /> Local space</span>
         </header>
         <div className="content-wrap">
-          <Routes>
-            <Route path="/" element={<Overview />} />
-            <Route path="/library" element={<LibraryPage />} />
-            <Route path="/book/:id" element={<ReaderPage />} />
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="*" element={<RoutedPage />} />
-          </Routes>
+              <Routes>
+              <Route path="/" element={<Overview />} />
+
+              <Route
+                path="/library"
+                element={<LibraryPage />}
+              />
+
+              <Route
+                path="/book/:id"
+                element={<ReaderPage />}
+              />
+
+              <Route
+                path="/memory"
+                element={<ReadingMemoryPage />}
+              />
+
+              <Route
+                path="/notes"
+                element={<NotesPage />}
+              />
+
+              <Route
+                path="/account"
+                element={<AccountPage />}
+              />
+
+              <Route
+                path="/memory-test"
+                element={<EmbeddingTest />}
+              />
+
+              <Route
+                path="*"
+                element={<RoutedPage />}
+              />
+            </Routes>
         </div>
       </main>
     </div>

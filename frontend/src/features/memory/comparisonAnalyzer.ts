@@ -53,7 +53,7 @@ export async function analyzeRelationship(
         detail = data.detail
       }
     } catch {
-      // Response wasn't JSON.
+      // Backend response was not JSON.
     }
 
     if (response.status === 429) {

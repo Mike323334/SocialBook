@@ -6,3 +6,4 @@ pydantic-settings>=2.6,<3.0
 psycopg[binary]>=3.2,<4.0
 SQLAlchemy>=2.0,<3.0
 uvicorn[standard]>=0.32,<1.0
+groq

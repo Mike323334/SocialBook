@@ -1,4 +1,5 @@
-import Dexie, { type EntityTable } from 'dexie'
+import Dexie, { type EntityTable,  type Table  } from 'dexie'
+
 
 export interface DocumentRecord {
   id: string
@@ -49,12 +50,45 @@ export interface ChatMessageRecord {
   status: 'pending' | 'answered' | 'failed'
 }
 
+// PUT THESE HERE
+export interface MemoryChunkRecord {
+  id: string
+  documentId: string
+  pageNumber: number
+  chunkIndex: number
+  text: string
+  startOffset: number
+  endOffset: number
+  createdAt: Date
+}
+
+export interface MemoryEmbeddingRecord {
+  id: string
+  documentId: string
+  model: string
+  dimensions: number
+  vector: Float32Array
+  createdAt: Date
+}
+export interface NoteRecord {
+  id: string
+  documentId: string
+  bookTitle: string
+  content: string
+  authorName: string | null
+  createdAt: Date
+  updatedAt: Date
+  isPublished: boolean
+}
+
 export class ReadingMemoryDB extends Dexie {
   documents!: EntityTable<DocumentRecord, 'id'>
   pages!: EntityTable<PageRecord, 'id'>
   conversations!: EntityTable<ConversationRecord, 'id'>
   messages!: EntityTable<ChatMessageRecord, 'id'>
 
+  memoryChunks!: EntityTable<MemoryChunkRecord, 'id'>
+  memoryEmbeddings!: EntityTable<MemoryEmbeddingRecord, 'id'>
   constructor(name = 'ReadingMemoryDB') {
     super(name)
     this.version(1).stores({
@@ -121,7 +155,26 @@ export class ReadingMemoryDB extends Dexie {
       importedMemories: 'id, documentId, category, importedAt',
     })
     this.version(6).stores({ importedMemories: null })
+    this.version(7).stores({
+      documents: 'id, title, createdAt, lastReadAt',
+      pages: 'id, documentId, [documentId+pageNumber]',
+      conversations: 'id, documentId, updatedAt',
+      messages: 'id, conversationId, documentId, createdAt, sequence, status, [conversationId+sequence]',
+
+      memoryChunks: 'id, documentId, [documentId+pageNumber], [documentId+chunkIndex]',
+      memoryEmbeddings: 'id, documentId, model',
+    })
+        this.version(8).stores({
+      documents: 'id, title, createdAt, lastReadAt',
+      pages: 'id, documentId, [documentId+pageNumber]',
+      conversations: 'id, documentId, updatedAt',
+      messages: 'id, conversationId, documentId, createdAt, sequence, status, [conversationId+sequence]',
+      memoryChunks: 'id, documentId, [documentId+pageNumber], [documentId+chunkIndex]',
+      memoryEmbeddings: 'id, documentId, model',
+      notes: 'id, documentId, createdAt, updatedAt, isPublished',
+    })
   }
 }
 
 export const database = new ReadingMemoryDB()
+

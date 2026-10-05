@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: book-and-chat
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: ANALYTICS_ADMIN_TOKEN
+        sync: false
+      - key: SUPABASE_DATABASE_URL
+        sync: false
