@@ -13,8 +13,8 @@ import {
   type PageRecord,
 } from '../../db/database'
 
-import { indexDocument } from './memoryIndexer'
-import { indexDocumentEmbeddings } from './embeddingIndexer'
+import { indexBookMemory } from "../memory/memoryIndexer";
+import { indexBookEmbeddings } from "../memory/embeddingIndexer";
 
 
 GlobalWorkerOptions.workerSrc = workerUrl
