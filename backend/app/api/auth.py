@@ -287,4 +287,4 @@ def logout(response: Response) -> None:
         path="/",
         httponly=True,
         samesite="lax",
-    )
+    )   

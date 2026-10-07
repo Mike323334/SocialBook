@@ -1,4 +1,4 @@
-import Dexie, { type EntityTable,  type Table  } from 'dexie'
+import Dexie, { type EntityTable  } from 'dexie'
 
 
 export interface DocumentRecord {
@@ -89,6 +89,7 @@ export class ReadingMemoryDB extends Dexie {
 
   memoryChunks!: EntityTable<MemoryChunkRecord, 'id'>
   memoryEmbeddings!: EntityTable<MemoryEmbeddingRecord, 'id'>
+  notes!: EntityTable<NoteRecord, 'id'>
   constructor(name = 'ReadingMemoryDB') {
     super(name)
     this.version(1).stores({

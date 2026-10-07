@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
-import { database } from '../../db/database'
+import {
+  database,
+  type DocumentRecord,
+} from '../../db/database'
 import {
   loadSemanticData,
   searchLoadedSemanticData,
@@ -129,14 +132,8 @@ export default function EmbeddingTest() {
     setSelectedBookId,
   ] = useState('')
 
-  const [books, setBooks] =
-    useState<
-      Awaited<
-        ReturnType<
-          typeof database.documents.toArray
-        >
-      >
-    >([])
+const [books, setBooks] =
+  useState<DocumentRecord[]>([])
 
   const [loading, setLoading] =
     useState(false)
