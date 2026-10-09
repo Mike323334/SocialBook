@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { BookOpen, FilePlus2, FileText, LoaderCircle, Trash2 } from 'lucide-react'
-import { database, type DocumentRecord, type PageRecord } from '../../db/database'
+import { database, type DocumentRecord, type OutlineItem, type PageRecord } from '../../db/database'
 import { BookChatPanel } from '../chat/BookChatPanel'
 import { trackAnalyticsEvent } from '../analytics/analyticsClient'
+import { OUTLINE_VERSION } from './tocParser'
+
+type StoredBook = DocumentRecord & { outlineVersion?: number }
 
 function formatSize(bytes: number): string {
   return bytes < 1024 * 1024
@@ -125,6 +128,49 @@ export function LibraryPage() {
   )
 }
 
+/** Index of the entry the reader is currently inside (the last one that starts on or before this page). */
+function findActiveIndex(items: OutlineItem[], pageNumber: number): number {
+  let active = -1
+
+  items.forEach((item, index) => {
+    if (item.pageNumber !== null && item.pageNumber <= pageNumber) active = index
+  })
+
+  return active
+}
+
+function OutlineList({
+  items,
+  activeIndex,
+  onSelect,
+}: {
+  items: OutlineItem[]
+  activeIndex: number
+  onSelect: (page: number) => void
+}) {
+  return (
+    <ul className="outline-list">
+      {items.map((item, index) => {
+        const page = item.pageNumber
+
+        return (
+          <li key={index} style={{ paddingLeft: `${Math.min(item.depth, 4) * 12}px` }}>
+            <button
+              type="button"
+              disabled={page === null}
+              className={index === activeIndex ? 'selected' : ''}
+              title={page === null ? item.title : `${item.title} (page ${page})`}
+              onClick={() => { if (page !== null) onSelect(page) }}
+            >
+              {item.title}
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 export function ReaderPage() {
   const { id } = useParams()
   const [book, setBook] = useState<DocumentRecord | null>(null)
@@ -134,10 +180,13 @@ export function ReaderPage() {
 
   useEffect(() => {
     if (!id) return
+    let cancelled = false
+
     void Promise.all([
       database.documents.get(id),
       database.pages.where('documentId').equals(id).sortBy('pageNumber'),
     ]).then(([record, records]) => {
+      if (cancelled) return
       if (!record) {
         setMissing(true)
         return
@@ -145,8 +194,40 @@ export function ReaderPage() {
       setBook(record)
       setPages(records)
       void database.documents.update(id, { lastReadAt: new Date() })
+
+      // Books saved without chapters (or with an empty list by an older version):
+      // build the outline once from the stored PDF, then remember the result.
+      const stored: StoredBook = record
+      const outdated =
+        stored.outlineVersion !== OUTLINE_VERSION &&
+        (stored.outline?.length === 0 || typeof stored.outline?.[0]?.depth !== 'number')
+      const needsOutline = !stored.outline || outdated
+
+      if (needsOutline && stored.pdf) {
+        const pageTexts = records.map((page) => page.text)
+
+        void import('./pdfImport')
+          .then(({ extractOutlineFromFile }) => extractOutlineFromFile(stored.pdf as Blob, pageTexts))
+          .then(async (outline) => {
+            const patch: Partial<StoredBook> = { outline, outlineVersion: OUTLINE_VERSION }
+            await database.documents.update(id, patch)
+            if (!cancelled) setBook((current) => (current ? { ...current, outline } : current))
+          })
+          .catch(() => {
+            /* Leave it as is; the next visit tries again. */
+          })
+      }
     })
+
+    return () => { cancelled = true }
   }, [id])
+
+  const outline = book?.outline
+  const hasOutline = Boolean(outline && outline.length > 0 && typeof outline[0].depth === 'number')
+  const activeIndex = useMemo(
+    () => (outline ? findActiveIndex(outline, pageNumber) : -1),
+    [outline, pageNumber],
+  )
 
   if (missing) {
     return <section className="reader-loading"><p>This book is no longer in your local library.</p><Link to="/library">Return to library</Link></section>
@@ -165,13 +246,17 @@ export function ReaderPage() {
         <div><h1>{book.title}</h1><span>{book.author || `${book.pageCount} pages`}</span></div>
       </header>
       <div className="reader-layout">
-        <nav className="page-rail" aria-label="Book pages">
-          <p>Pages</p>
-          {pages.map((page) => (
-            <button key={page.pageNumber} type="button" className={page.pageNumber === pageNumber ? 'selected' : ''} onClick={() => setPageNumber(page.pageNumber)}>
-              {page.pageNumber}
-            </button>
-          ))}
+        <nav className="page-rail" aria-label={hasOutline ? 'Chapters' : 'Book pages'}>
+          <p>{hasOutline ? 'Chapters' : 'Pages'}</p>
+          {hasOutline && outline ? (
+            <OutlineList items={outline} activeIndex={activeIndex} onSelect={setPageNumber} />
+          ) : (
+            pages.map((page) => (
+              <button key={page.pageNumber} type="button" className={page.pageNumber === pageNumber ? 'selected' : ''} onClick={() => setPageNumber(page.pageNumber)}>
+                {page.pageNumber}
+              </button>
+            ))
+          )}
         </nav>
         <article className="reader-sheet" aria-label={`Page ${pageNumber}`}>
           <div className="page-kicker">{book.title} <span>·</span> {pageNumber}</div>
