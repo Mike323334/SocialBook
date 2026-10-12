@@ -1,4 +1,6 @@
 import type { RetrievedPage } from './retrieval'
+import { API_URL } from '../account/accountApi'
+
 
 export interface ChatCitation {
   source_type: 'book_page'
@@ -19,7 +21,7 @@ export async function askBookQuestion(
   title: string,
   pages: RetrievedPage[],
 ): Promise<ChatAnswer> {
-  const response = await fetch('/api/chat', {
+  const response = await fetch(`${API_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

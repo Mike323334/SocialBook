@@ -5,6 +5,19 @@ export interface Account {
   display_name: string
 }
 
+export const ACCOUNT_CHANGED_EVENT =
+  'reading-memory-account-changed'
+
+export function notifyAccountChanged(
+  account: Account | null,
+): void {
+  window.dispatchEvent(
+    new CustomEvent<Account | null>(
+      ACCOUNT_CHANGED_EVENT,
+      { detail: account },
+    ),
+  )
+}
 interface Credentials {
   email: string
   password: string
@@ -15,9 +28,9 @@ interface Registration extends Credentials {
   display_name: string
 }
 
-const API_URL =
+export const API_URL =
   import.meta.env.VITE_API_URL ||
-  'http://127.0.0.1:8000'
+  'https://socialbooks-tbel.onrender.com'
 
 async function requestAccount(
   path: string,
@@ -42,8 +55,7 @@ async function requestAccount(
       'The account request could not be completed.'
 
     try {
-      const result: unknown =
-        await response.json()
+      const result: unknown = await response.json()
 
       if (
         typeof result === 'object' &&

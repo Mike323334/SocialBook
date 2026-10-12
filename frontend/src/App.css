@@ -956,4 +956,186 @@
   }
 }
 
+/* Chapters in the reader's left column */
+@media (min-width: 761px) {
+  .reader-layout:has(.outline-list) { grid-template-columns: 260px minmax(0, 1fr); }
+}
+.page-rail:has(.outline-list) p { padding-left: 8px; text-align: left; }
+.page-rail .outline-list { margin: 0; padding: 0; list-style: none; }
+.page-rail .outline-list li { margin: 0; }
+.page-rail .outline-list button { height: auto; min-height: 28px; padding: 6px 8px; text-align: left; white-space: normal; line-height: 1.35; font-size: 11px; }
+.page-rail .outline-list button:disabled { opacity: .6; cursor: default; }
 
+@media (max-width: 760px) {
+  .page-rail .outline-list { display: flex; gap: 4px; }
+  .page-rail .outline-list li { flex: 0 0 auto; padding-left: 0 !important; }
+  .page-rail .outline-list button { width: auto; white-space: nowrap; }
+}
+
+/* ==========================================================
+   READING MEMORY — WIDER READER AND CHAT
+   Add this block at the END of App.css.
+   ========================================================== */
+
+/* Allow the application content to use more screen width */
+.content-wrap {
+  width: 100%;
+  max-width: 1600px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 28px 32px 44px;
+}
+
+/* Give the book reader and AI chat more horizontal space */
+.book-chat {
+  min-width: 0;
+  min-height: 560px;
+  box-sizing: border-box;
+  padding: 20px 24px 18px;
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
+  gap: 20px;
+  grid-column: 1 / -1;
+  border-top: 1px solid #e4e7e1;
+  background: #fbfcf9;
+}
+
+/* Let the main chat column expand */
+.chat-main {
+  min-width: 0;
+  min-height: 480px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Give conversation messages more vertical space */
+.chat-messages {
+  min-width: 0;
+  min-height: 220px;
+  max-height: min(65vh, 760px);
+  margin: 13px -2px 10px;
+  padding: 2px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+/* Make AI answers use the full available chat width */
+.chat-message {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  padding: 12px 14px;
+  align-self: flex-start;
+  color: #435047;
+  background: #f0f2ed;
+  border-radius: 5px;
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Keep your questions compact and aligned to the right */
+.chat-message.user {
+  width: auto;
+  max-width: 96%;
+  align-self: flex-end;
+  color: #f9f8f0;
+  background: #526b58;
+}
+
+/* Give the question input comfortable spacing */
+.chat-form {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 72px;
+  padding: 10px;
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid #dfe4dc;
+  border-radius: 5px;
+}
+
+.chat-form textarea {
+  min-width: 0;
+  min-height: 48px;
+  max-height: 140px;
+  padding: 5px;
+  flex: 1;
+  resize: vertical;
+  color: #374239;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Improve reading comfort on medium-sized screens */
+@media (max-width: 1050px) {
+  .chat-messages {
+    max-height: min(55vh, 560px);
+  }
+}
+
+/* Preserve a usable layout on phones and narrow screens */
+@media (max-width: 760px) {
+  .content-wrap {
+    width: 100%;
+    padding: 20px 16px 36px;
+  }
+
+  .book-chat {
+    grid-column: 1;
+    min-height: 0;
+    padding: 15px 12px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .conversation-sidebar {
+    min-width: 0;
+    padding: 0 0 11px;
+    border-right: 0;
+    border-bottom: 1px solid #e4e7e1;
+  }
+
+  .chat-main {
+    min-height: 400px;
+  }
+
+  .chat-messages {
+    min-height: 200px;
+    max-height: 55vh;
+  }
+
+  .chat-message {
+    font-size: 13px;
+  }
+
+  .chat-form textarea {
+    font-size: 13px;
+  }
+}
+
+/* Additional adjustments for very small phones */
+@media (max-width: 400px) {
+  .book-chat {
+    padding: 12px 8px;
+  }
+
+  .chat-main {
+    min-height: 360px;
+  }
+
+  .chat-message {
+    padding: 10px;
+  }
+}

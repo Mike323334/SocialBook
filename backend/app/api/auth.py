@@ -77,18 +77,14 @@ class AccountResponse(BaseModel):
     display_name: str
 
 
-def set_session_cookie(
-    response: Response,
-    user_id: UUID,
-    settings: Settings,
-) -> None:
+def set_session_cookie(response: Response, user_id: UUID, settings: Settings) -> None:
     response.set_cookie(
         key=session_cookie,
         value=create_session_token(user_id, settings),
         max_age=settings.jwt_expire_minutes * 60,
         httponly=True,
-        secure=settings.environment.lower() not in {"development", "test"},
-        samesite="lax",
+        secure=True,
+        samesite="none",
         path="/",
     )
 

@@ -1,3 +1,4 @@
+import { API_URL } from '../account/accountApi'
 export type AnalyticsEvent = 'daily_visit' | 'question' | 'book_upload'
 const visitorKey = 'reading-memory.daily-visitor'
 
@@ -28,7 +29,7 @@ export async function trackAnalyticsEvent(event: AnalyticsEvent): Promise<void> 
   if (!visitorId) return
 
   try {
-    await fetch('/api/analytics/events', {
+    await fetch(`${API_URL}/api/analytics/events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ event, visitor_id: visitorId }),
