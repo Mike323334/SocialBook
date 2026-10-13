@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   BookOpen,
@@ -282,7 +282,6 @@ export function NotesPage() {
           .map(page => page.text.trim())
           .filter(Boolean)
           .join('\n\n')
-          .slice(0, 100000)
 
         if (!sourceText.trim()) {
           throw new Error(
@@ -847,3 +846,4 @@ export function NotesPage() {
     </section>
   )
 }
+
