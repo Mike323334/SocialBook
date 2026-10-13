@@ -66,6 +66,20 @@ def moderate_note(content: str, source_text: str):
         source_text=source_text,
     )
 
+    print(
+    "COPYRIGHT MODERATION:",
+    {
+        "content_length": len(content),
+        "source_length": len(source_text),
+        "exact_match": result.exact_match_score,
+        "similarity": result.similarity_score,
+        "matched_ratio": result.matched_ratio,
+        "decision": result.decision.status,
+        "score": result.decision.score,
+        "reason": result.decision.reason,
+    },
+)
+
     if result.decision.status == "block":
         raise HTTPException(
             status_code=403,
