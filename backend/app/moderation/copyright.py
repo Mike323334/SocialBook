@@ -19,33 +19,43 @@ class CopyrightCheckResult:
 def calculate_matched_ratio(
     publication_text: str,
     source_text: str,
+    n: int = 5,
 ) -> float:
     """
-    Estimate the percentage of publication words
-    that also appear in the source.
+    Estimate the proportion of publication words that belong
+    to matching sequences of at least n consecutive words.
 
-    This is intentionally conservative and simple.
+    Individual shared words do not count as evidence of copying.
     """
+    import re
 
-    publication_words = (
-        publication_text.lower().split()
+    publication_words = re.findall(
+        r"\b\w+\b",
+        publication_text.lower(),
     )
 
-    source_words = set(
-        source_text.lower().split()
+    source_words = re.findall(
+        r"\b\w+\b",
+        source_text.lower(),
     )
 
-    if not publication_words:
+    if len(publication_words) < n:
         return 0.0
 
-    matched_words = sum(
-        1
-        for word in publication_words
-        if word in source_words
-    )
+    source_ngrams = {
+        tuple(source_words[i:i + n])
+        for i in range(len(source_words) - n + 1)
+    }
 
-    return matched_words / len(publication_words)
+    matched_positions = set()
 
+    for i in range(len(publication_words) - n + 1):
+        phrase = tuple(publication_words[i:i + n])
+
+        if phrase in source_ngrams:
+            matched_positions.update(range(i, i + n))
+
+    return len(matched_positions) / len(publication_words)
 
 def check_copyright(
     publication_text: str,
