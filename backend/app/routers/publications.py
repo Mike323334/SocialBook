@@ -38,7 +38,7 @@ class CommunityNoteCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     book_title: str = Field(min_length=1, max_length=300)
-    content: str = Field(min_length=1, max_length=20000)
+    content: str = Field(min_length=1, max_length=1000)
     source_text: str = Field(min_length=1)
 
 

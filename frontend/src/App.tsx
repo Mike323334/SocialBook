@@ -180,9 +180,31 @@ function Overview() {
 }
 
 function RoutedPage() {
-  const { pathname: path } = useLocation()
+  const { pathname } = useLocation()
 
-  const page = pageCopy[path] ?? pageCopy['/library']
+  const page = pageCopy[pathname]
+
+  if (!page) {
+    return (
+      <section className="placeholder-page">
+        <p className="eyebrow">Reading memory</p>
+
+        <h1>Page not found</h1>
+
+        <p>
+          The page you requested does not exist.
+          Use the navigation menu to open another page.
+        </p>
+
+        <NavLink
+          className="welcome-action"
+          to="/"
+        >
+          Return to overview →
+        </NavLink>
+      </section>
+    )
+  }
 
   return (
     <section className="placeholder-page">
@@ -268,7 +290,7 @@ function App() {
 
       setAccount(null)
 
-      // Update every component listening for authentication changes.
+      // Notify other components about the authentication change.
       notifyAccountChanged(null)
     } catch (error: unknown) {
       setAuthError(
@@ -282,7 +304,7 @@ function App() {
   }
 
   return (
-    <div className="app-frame">
+    <div className="app-shell">
       <aside className="sidebar">
         <NavLink
           className="brand"
@@ -330,17 +352,11 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-area">
+      <div className="app-main">
         <header className="topbar">
           <span>Personal library</span>
 
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-            }}
-          >
+          <div className="topbar-actions">
             <span className="local-badge">
               <LockKeyhole size={13} />
               Local space
@@ -368,56 +384,57 @@ function App() {
           <p
             className="error-message"
             role="alert"
-            style={{ margin: '12px 24px' }}
           >
             {authError}
           </p>
         )}
 
-        <div className="content-wrap">
-          <Routes>
-            <Route
-              path="/"
-              element={<Overview />}
-            />
+        <main className="app-content">
+          <div className="content-wrap">
+            <Routes>
+              <Route
+                path="/"
+                element={<Overview />}
+              />
 
-            <Route
-              path="/library"
-              element={<LibraryPage />}
-            />
+              <Route
+                path="/library"
+                element={<LibraryPage />}
+              />
 
-            <Route
-              path="/book/:id"
-              element={<ReaderPage />}
-            />
+              <Route
+                path="/book/:id"
+                element={<ReaderPage />}
+              />
 
-            <Route
-              path="/memory"
-              element={<ReadingMemoryPage />}
-            />
+              <Route
+                path="/memory"
+                element={<ReadingMemoryPage />}
+              />
 
-            <Route
-              path="/notes"
-              element={<NotesPage />}
-            />
+              <Route
+                path="/notes"
+                element={<NotesPage />}
+              />
 
-            <Route
-              path="/account"
-              element={<AccountPage />}
-            />
+              <Route
+                path="/account"
+                element={<AccountPage />}
+              />
 
-            <Route
-              path="/memory-test"
-              element={<EmbeddingTest />}
-            />
+              <Route
+                path="/memory-test"
+                element={<EmbeddingTest />}
+              />
 
-            <Route
-              path="*"
-              element={<RoutedPage />}
-            />
-          </Routes>
-        </div>
-      </main>
+              <Route
+                path="*"
+                element={<RoutedPage />}
+              />
+            </Routes>
+          </div>
+        </main>
+      </div>
     </div>
   )
 }

@@ -161,6 +161,24 @@ export function AccountPage() {
     setPassword('')
   }
 
+    // Wait for the initial session check before showing the login form.
+  if (checkingSession) {
+    return (
+      <section
+        className="account-page"
+        aria-busy="true"
+        aria-live="polite"
+      >
+        <LoaderCircle
+          className="spin"
+          size={24}
+          aria-hidden="true"
+        />
+        <p>Checking your account...</p>
+      </section>
+    )
+  }
+
   // An authenticated user sees their profile, not the account form.
   if (account) {
     return (

@@ -18,6 +18,7 @@ export function notifyAccountChanged(
     ),
   )
 }
+
 interface Credentials {
   email: string
   password: string
@@ -30,53 +31,74 @@ interface Registration extends Credentials {
 
 export const API_URL =
   import.meta.env.VITE_API_URL ||
-  'https://socialbooks-tbel.onrender.com'
+  'https://social-books-dny1.onrender.com'
+
+const REQUEST_TIMEOUT_MS = 15000
 
 async function requestAccount(
   path: string,
   body?: Credentials | Registration,
 ): Promise<Account | null> {
-  const response = await fetch(
-    `${API_URL}/api/auth/${path}`,
-    {
-      method: path === 'me' ? 'GET' : 'POST',
-      headers: body
-        ? { 'Content-Type': 'application/json' }
-        : undefined,
-      body: body
-        ? JSON.stringify(body)
-        : undefined,
-      credentials: 'include',
-    },
-  )
+  const controller = new AbortController()
 
-  if (!response.ok) {
-    let message =
-      'The account request could not be completed.'
+  const timeoutId = window.setTimeout(() => {
+    controller.abort()
+  }, REQUEST_TIMEOUT_MS)
 
-    try {
-      const result: unknown = await response.json()
+  try {
+    const response = await fetch(
+      `${API_URL}/api/auth/${path}`,
+      {
+        method: path === 'me' ? 'GET' : 'POST',
+        headers: body
+          ? { 'Content-Type': 'application/json' }
+          : undefined,
+        body: body
+          ? JSON.stringify(body)
+          : undefined,
+        credentials: 'include',
+        signal: controller.signal,
+      },
+    )
 
-      if (
-        typeof result === 'object' &&
-        result !== null &&
-        'detail' in result &&
-        typeof result.detail === 'string'
-      ) {
-        message = result.detail
+    if (!response.ok) {
+      let message =
+        'The account request could not be completed.'
+
+      try {
+        const result: unknown = await response.json()
+
+        if (
+          typeof result === 'object' &&
+          result !== null &&
+          'detail' in result &&
+          typeof result.detail === 'string'
+        ) {
+          message = result.detail
+        }
+      } catch {
+        // Keep the generic message if the response isn't JSON.
       }
-    } catch {
-      // Keep a generic message for non-JSON errors.
+
+      throw new Error(message)
     }
 
-    throw new Error(message)
-  }
+    if (response.status === 204) {
+      return null
+    }
 
-  if (response.status === 204) {
-    return null
-  }
+    return await response.json() as Account
+  } catch (cause: unknown) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        'The account server took too long to respond. Please try again.',
+      )
+    }
 
-  return await response.json() as Account
+    throw cause
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
 }
 
 export const getCurrentAccount =

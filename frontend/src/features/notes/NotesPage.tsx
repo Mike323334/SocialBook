@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   BookOpen,
@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 
 import { database } from '../../db/database'
+
 import {
   ACCOUNT_CHANGED_EVENT,
   API_URL,
@@ -31,6 +32,12 @@ interface CommunityNote {
 
 interface ApiError {
   detail?: string | { message?: string }
+}
+
+interface ChapterOption {
+  title: string
+  pageNumber: number | null
+  depth: number
 }
 
 async function getErrorMessage(
@@ -56,9 +63,67 @@ async function getErrorMessage(
   return `The request failed (${response.status}).`
 }
 
+/**
+ * Detect chapter headings in extracted PDF text.
+ *
+ * This is a fallback for PDFs without usable bookmarks.
+ */
+function detectChaptersFromPages(
+  pages: Array<{ pageNumber: number; text: string }>,
+): ChapterOption[] {
+  const found: ChapterOption[] = []
+  const seen = new Set<string>()
+
+  const chapterPattern =
+    /\bchapter\s+(\d{1,3}|[ivxlcdm]{1,8}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\b/gi
+
+  for (const page of [...pages].sort(
+    (a, b) => a.pageNumber - b.pageNumber,
+  )) {
+    const text = page.text.replace(/\s+/g, ' ')
+
+    chapterPattern.lastIndex = 0
+
+    let match: RegExpExecArray | null
+
+    while ((match = chapterPattern.exec(text)) !== null) {
+      const numberOrWord = match[1]
+      const title = `Chapter ${numberOrWord}`
+      const key = title.toLocaleLowerCase()
+
+      if (!seen.has(key)) {
+        seen.add(key)
+
+        found.push({
+          title,
+          pageNumber: page.pageNumber,
+          depth: 0,
+        })
+      }
+
+      // Prevent a pathological zero-length regex loop.
+      if (chapterPattern.lastIndex === match.index) {
+        chapterPattern.lastIndex++
+      }
+    }
+  }
+
+  return found
+}
+
 export function NotesPage() {
   const [isCreating, setIsCreating] = useState(false)
+
   const [selectedBookId, setSelectedBookId] = useState('')
+  const [selectedChapterIndex, setSelectedChapterIndex] =
+    useState('')
+
+  const [manualChapterTitle, setManualChapterTitle] =
+    useState('')
+
+  const [manualChapterPage, setManualChapterPage] =
+    useState('1')
+
   const [content, setContent] = useState('')
 
   const [account, setAccount] = useState<Account | null>(null)
@@ -75,9 +140,14 @@ export function NotesPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
+  /*
+   * Load books and notes from IndexedDB.
+   *
+   * useLiveQuery keeps the component updated when the
+   * corresponding Dexie tables change.
+   */
   const books = useLiveQuery(
     () => database.documents.orderBy('title').toArray(),
-    [],
     [],
   )
 
@@ -88,9 +158,82 @@ export function NotesPage() {
         .reverse()
         .toArray(),
     [],
-    [],
   )
 
+  /*
+   * The queries can initially return undefined.
+   * These fallback arrays make rendering and array
+   * operations safe while IndexedDB loads.
+   */
+  const bookList = books ?? []
+  const noteList = notes ?? []
+
+  const selectedBook = bookList.find(
+    book => book.id === selectedBookId,
+  )
+
+  /*
+   * Load the selected book's pages.
+   */
+const selectedBookPages =
+  useLiveQuery(
+    () =>
+      selectedBookId
+        ? database.pages
+            .where('documentId')
+            .equals(selectedBookId)
+            .sortBy('pageNumber')
+        : database.pages
+            .toCollection()
+            .limit(0)
+            .toArray(),
+    [selectedBookId],
+  ) ?? []
+
+  /*
+   * Prefer the PDF's stored outline when it contains
+   * chapters with page numbers.
+   *
+   * Otherwise, detect chapter headings from extracted text.
+   */
+  const bookmarkedChapters =
+    selectedBook?.outline?.filter(
+      chapter => chapter.pageNumber !== null,
+    ) ?? []
+
+  const detectedChapters =
+    detectChaptersFromPages(selectedBookPages)
+
+  const chapters =
+    bookmarkedChapters.length > 0
+      ? bookmarkedChapters
+      : detectedChapters
+
+  /*
+   * Resolve the selected chapter.
+   *
+   * The manual option allows the reader to enter a chapter
+   * even when automatic chapter detection succeeds.
+   */
+  const selectedChapter =
+    selectedChapterIndex === 'manual'
+      ? manualChapterTitle.trim()
+        ? {
+            title: manualChapterTitle.trim(),
+            pageNumber: Math.max(
+              1,
+              Number.parseInt(manualChapterPage, 10) || 1,
+            ),
+            depth: 0,
+          }
+        : undefined
+      : selectedChapterIndex !== ''
+        ? chapters[Number(selectedChapterIndex)]
+        : undefined
+
+  /*
+   * Load community notes for the signed-in account.
+   */
   const loadCommunityNotes = useCallback(async () => {
     if (accountLoading) {
       return
@@ -133,6 +276,10 @@ export function NotesPage() {
     }
   }, [account, accountLoading])
 
+  /*
+   * Load the current account and listen for authentication
+   * changes elsewhere in the application.
+   */
   useEffect(() => {
     let active = true
     let accountChangedDuringLoad = false
@@ -147,6 +294,7 @@ export function NotesPage() {
       } catch (err) {
         if (active && !accountChangedDuringLoad) {
           setAccount(null)
+
           console.error(
             'Could not load the current account:',
             err,
@@ -188,6 +336,9 @@ export function NotesPage() {
     }
   }, [])
 
+  /*
+   * Load community notes after the account check completes.
+   */
   useEffect(() => {
     if (accountLoading) {
       return
@@ -196,15 +347,22 @@ export function NotesPage() {
     void loadCommunityNotes()
   }, [account, accountLoading, loadCommunityNotes])
 
+  /*
+   * Create a new private note in IndexedDB.
+   */
   async function createNote() {
     const text = content.trim()
 
-    if (!selectedBookId || !text) {
+    if (!selectedBookId || !selectedChapter || !text) {
+      setError(
+        'Select a book, select a chapter, and write a note.',
+      )
       return
     }
 
     setError('')
     setMessage('')
+    setSaving(true)
 
     try {
       const book = await database.documents.get(
@@ -222,6 +380,8 @@ export function NotesPage() {
         id: crypto.randomUUID(),
         documentId: book.id,
         bookTitle: book.title,
+        chapterTitle: selectedChapter.title,
+        chapterPageNumber: selectedChapter.pageNumber,
         content: text,
         authorName: account?.display_name ?? null,
         createdAt: now,
@@ -231,15 +391,25 @@ export function NotesPage() {
 
       setContent('')
       setSelectedBookId('')
+      setSelectedChapterIndex('')
+      setManualChapterTitle('')
+      setManualChapterPage('1')
       setIsCreating(false)
 
-      setMessage('Your note was saved privately.')
+      setMessage(
+        `Your note about "${selectedChapter.title}" was saved privately.`,
+      )
     } catch (err) {
       console.error('Could not save the note:', err)
       setError('Could not save your note.')
+    } finally {
+      setSaving(false)
     }
   }
 
+  /*
+   * Publish a private note or make a published note private.
+   */
   async function togglePublished(
     noteId: string,
     published: boolean,
@@ -248,7 +418,9 @@ export function NotesPage() {
     setMessage('')
 
     if (accountLoading) {
-      setError('Please wait while we check your sign-in session.')
+      setError(
+        'Please wait while we check your sign-in session.',
+      )
       return
     }
 
@@ -272,6 +444,10 @@ export function NotesPage() {
       }
 
       if (published) {
+        /*
+         * Gather the selected book's extracted text
+         * for the backend copyright check.
+         */
         const pages = await database.pages
           .where('documentId')
           .equals(note.documentId)
@@ -323,6 +499,10 @@ export function NotesPage() {
           'Your note was published to the community.',
         )
       } else {
+        /*
+         * Find the corresponding community note owned
+         * by the current user.
+         */
         const communityNote = communityNotes.find(
           item =>
             item.is_owner &&
@@ -377,6 +557,9 @@ export function NotesPage() {
     }
   }
 
+  /*
+   * Delete a private note from IndexedDB.
+   */
   async function deleteNote(noteId: string) {
     setError('')
     setMessage('')
@@ -397,6 +580,7 @@ export function NotesPage() {
       }
 
       await database.notes.delete(noteId)
+
       setMessage('Your note was deleted.')
     } catch (err) {
       console.error('Could not delete the note:', err)
@@ -404,6 +588,9 @@ export function NotesPage() {
     }
   }
 
+  /*
+   * Delete a community note owned by the current user.
+   */
   async function deleteCommunityNote(
     communityNote: CommunityNote,
   ) {
@@ -427,7 +614,7 @@ export function NotesPage() {
         throw new Error(await getErrorMessage(response))
       }
 
-      const matchingNotes = notes.filter(
+      const matchingNotes = noteList.filter(
         note =>
           note.isPublished &&
           note.bookTitle === communityNote.book_title &&
@@ -526,19 +713,117 @@ export function NotesPage() {
 
               <select
                 value={selectedBookId}
-                onChange={event =>
+                onChange={event => {
                   setSelectedBookId(event.target.value)
-                }
+                  setSelectedChapterIndex('')
+                  setManualChapterTitle('')
+                  setManualChapterPage('1')
+                  setError('')
+                  setMessage('')
+                }}
+                required
               >
                 <option value="">Select a book</option>
 
-                {books.map(book => (
+                {bookList.map(book => (
                   <option key={book.id} value={book.id}>
                     {book.title}
                   </option>
                 ))}
               </select>
             </label>
+
+            <div className="chapter-field">
+              <label>
+                <span>Chapter</span>
+
+                <select
+                  value={selectedChapterIndex}
+                  onChange={event => {
+                    setSelectedChapterIndex(
+                      event.target.value,
+                    )
+                    setError('')
+                    setMessage('')
+                  }}
+                  disabled={!selectedBookId}
+                  required
+                >
+                  <option value="">
+                    {!selectedBookId
+                      ? 'Select a book first'
+                      : chapters.length === 0
+                        ? 'No chapter headings detected'
+                        : 'Select a chapter'}
+                  </option>
+
+                  {chapters.map((chapter, index) => (
+                    <option
+                      key={`${chapter.title}-${index}`}
+                      value={index}
+                    >
+                      {chapter.title} — page{' '}
+                      {chapter.pageNumber ?? 'unknown'}
+                    </option>
+                  ))}
+
+                  {selectedBookId && (
+                    <option value="manual">
+                      Enter chapter manually
+                    </option>
+                  )}
+                </select>
+              </label>
+
+              {selectedChapterIndex === 'manual' && (
+                <div className="manual-chapter-fields">
+                  <label>
+                    <span>Chapter title</span>
+
+                    <input
+                      type="text"
+                      value={manualChapterTitle}
+                      onChange={event =>
+                        setManualChapterTitle(
+                          event.target.value,
+                        )
+                      }
+                      placeholder="e.g. Chapter 1 — Introduction"
+                      required
+                    />
+                  </label>
+
+                  <label>
+                    <span>Starting page</span>
+
+                    <input
+                      type="number"
+                      min="1"
+                      max={
+                        selectedBook?.pageCount ?? undefined
+                      }
+                      value={manualChapterPage}
+                      onChange={event =>
+                        setManualChapterPage(
+                          event.target.value,
+                        )
+                      }
+                      required
+                    />
+                  </label>
+                </div>
+              )}
+
+              {selectedBookId &&
+                chapters.length === 0 && (
+                  <small>
+                    The app checks PDF bookmarks and extracted
+                    text for headings such as “Chapter 1”.
+                    If it cannot find any, enter the chapter
+                    title and its starting page manually.
+                  </small>
+                )}
+            </div>
 
             <label>
               <span>Your note</span>
@@ -556,8 +841,7 @@ export function NotesPage() {
 
           <div className="note-editor-footer">
             <p>
-              New notes are private. You can publish
-              them later.
+              New notes are private. You can publish them later.
             </p>
 
             <div>
@@ -567,7 +851,12 @@ export function NotesPage() {
                 onClick={() => {
                   setIsCreating(false)
                   setSelectedBookId('')
+                  setSelectedChapterIndex('')
+                  setManualChapterTitle('')
+                  setManualChapterPage('1')
                   setContent('')
+                  setError('')
+                  setMessage('')
                 }}
               >
                 Cancel
@@ -579,6 +868,7 @@ export function NotesPage() {
                 disabled={
                   saving ||
                   !selectedBookId ||
+                  !selectedChapter ||
                   !content.trim()
                 }
                 onClick={() => void createNote()}
@@ -598,16 +888,18 @@ export function NotesPage() {
                 <p className="eyebrow">Your writing</p>
 
                 <h2>
-                  {notes.length === 0
+                  {noteList.length === 0
                     ? 'No notes yet'
-                    : `${notes.length} ${
-                        notes.length === 1 ? 'note' : 'notes'
+                    : `${noteList.length} ${
+                        noteList.length === 1
+                          ? 'note'
+                          : 'notes'
                       }`}
                 </h2>
               </div>
             </div>
 
-            {notes.length === 0 ? (
+            {noteList.length === 0 ? (
               <div className="notes-empty">
                 <BookOpen
                   size={24}
@@ -625,7 +917,7 @@ export function NotesPage() {
               </div>
             ) : (
               <div className="notes-list">
-                {notes.map(note => (
+                {noteList.map(note => (
                   <article
                     key={note.id}
                     className="note-card"
@@ -638,6 +930,20 @@ export function NotesPage() {
 
                       <span>{note.bookTitle}</span>
                     </div>
+
+                    {note.chapterTitle && (
+                      <p className="note-card-chapter">
+                        <strong>Chapter:</strong>{' '}
+                        {note.chapterTitle}
+
+                        {note.chapterPageNumber != null && (
+                          <>
+                            {' '}
+                            · Page {note.chapterPageNumber}
+                          </>
+                        )}
+                      </p>
+                    )}
 
                     <p className="note-card-content">
                       {note.content}
@@ -694,6 +1000,7 @@ export function NotesPage() {
                           type="button"
                           className="note-delete"
                           aria-label="Delete note"
+                          disabled={saving}
                           onClick={() =>
                             void deleteNote(note.id)
                           }
@@ -798,7 +1105,7 @@ export function NotesPage() {
                             type="button"
                             disabled={saving}
                             onClick={() => {
-                              const localNote = notes.find(
+                              const localNote = noteList.find(
                                 item =>
                                   item.isPublished &&
                                   item.bookTitle ===
@@ -827,6 +1134,7 @@ export function NotesPage() {
                             type="button"
                             className="note-delete"
                             aria-label="Delete community note"
+                            disabled={saving}
                             onClick={() =>
                               void deleteCommunityNote(note)
                             }

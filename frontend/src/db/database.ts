@@ -85,6 +85,8 @@ export interface NoteRecord {
   bookTitle: string
   content: string
   authorName: string | null
+  chapterTitle?: string | null
+  chapterPageNumber?: number | null
   createdAt: Date
   updatedAt: Date
   isPublished: boolean

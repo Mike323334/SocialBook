@@ -178,14 +178,14 @@ Explain the mechanism or conceptual bridge connecting the passages.
 Explain HOW the ideas connect.
 
 bookAContribution:
-Explain what contributes to the relationship.
+Explain what Book A contributes to the relationship.
 Identify the specific idea, explanation, technique, cause, risk, principle,
-or perspective that provides.
+or perspective that Book A provides.
 
 bookBContribution:
-Explain what contributes to the relationship.
+Explain what Book B contributes to the relationship.
 Identify the specific idea, explanation, technique, cause, risk, principle,
-or perspective that  provides.
+or perspective that Book B provides.
 
 importantDifference:
 Explain an important difference in how the passages approach the subject.
