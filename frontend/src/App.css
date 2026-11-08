@@ -3488,3 +3488,48 @@
     font-size: 12px;
   }
 }
+
+@media (max-width: 760px) {
+  .sidebar {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .sidebar nav {
+    gap: 5px;
+    width: 100%;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .sidebar nav > .nav-link,
+  .memory-nav-trigger,
+  .memory-sub-link {
+    min-height: 38px;
+    padding-left: 9px;
+    padding-right: 9px;
+    font-size: 12px;
+  }
+
+  .memory-nav-group {
+    gap: 5px;
+  }
+
+  .memory-nav-submenu {
+    gap: 5px;
+  }
+}
+
+@media (max-width: 400px) {
+  .sidebar nav {
+    gap: 4px;
+  }
+
+  .sidebar nav > .nav-link,
+  .memory-nav-trigger,
+  .memory-sub-link {
+    padding-left: 7px;
+    padding-right: 7px;
+    font-size: 11px;
+  }
+}
