@@ -3380,3 +3380,111 @@
     font-size: 12px;
   }
 }
+
+/* =========================================
+   MOBILE NAVIGATION — HORIZONTAL SCROLL
+   ========================================= */
+
+@media (max-width: 760px) {
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .sidebar nav {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+
+    overflow-x: auto;
+    overflow-y: hidden;
+
+    padding: 4px 2px 12px;
+
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+
+    scrollbar-width: thin;
+  }
+
+  .sidebar nav > .nav-link {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+
+    width: auto;
+    min-width: max-content;
+    min-height: 42px;
+
+    padding: 0 14px;
+    white-space: nowrap;
+  }
+
+  .memory-nav-group {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+
+    width: auto;
+    min-width: max-content;
+    margin: 0;
+    padding: 0;
+  }
+
+  .memory-nav-trigger {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: auto;
+    min-width: max-content;
+    white-space: nowrap;
+  }
+
+  .memory-nav-submenu {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+
+    width: auto;
+    margin: 0;
+    padding: 0;
+
+    border: none;
+    overflow: visible;
+  }
+
+  .memory-sub-link {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: auto;
+    min-width: max-content;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 380px) {
+  .sidebar nav {
+    gap: 6px;
+  }
+
+  .sidebar nav > .nav-link,
+  .memory-nav-trigger,
+  .memory-sub-link {
+    min-height: 40px;
+    padding-left: 11px;
+    padding-right: 11px;
+    font-size: 12px;
+  }
+}
