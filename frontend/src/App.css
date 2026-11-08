@@ -65,7 +65,19 @@
   overflow-y: auto;
 }
 /* Brand at the top of the sidebar */
-
+@media (max-width: 760px) {
+  .sidebar {
+    position: relative;
+    top: auto;
+    align-self: stretch;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+}
 .sidebar .brand {
   display: flex;
   align-items: center;
