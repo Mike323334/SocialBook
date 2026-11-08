@@ -3557,3 +3557,31 @@
     display: none;
   }
 }
+
+@media (max-width: 760px) {
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .app-shell .sidebar {
+    position: relative;
+    top: auto;
+    flex: 0 0 auto;          /* cancels the desktop 248px flex-basis */
+    align-self: stretch;
+    width: 100%;
+    min-width: 0;
+    max-width: none;         /* removes any hidden max-width */
+    height: auto;
+    border-radius: 0;        /* removes the rounded "card" look */
+    box-shadow: none;
+    box-sizing: border-box;
+  }
+
+  .app-shell .sidebar nav {
+    width: 100%;
+    max-width: none;
+    overflow-x: auto;
+  }
+}
