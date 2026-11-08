@@ -520,7 +520,7 @@ function App() {
             <BookOpen size={20} />
           </span>
 
-          <span>Reading Memory</span>
+          <span>SocialBooks</span>
         </NavLink>
 
         <div className="nav-caption">

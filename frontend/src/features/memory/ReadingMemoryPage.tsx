@@ -143,7 +143,7 @@ export function ReadingMemoryPage() {
             <span>Your personal knowledge base</span>
           </div>
 
-          <h1>Reading Memory</h1>
+          <h1>SocialBooks</h1>
 
           <p className="memory-page-description">
             Your books, questions, and discoveries come together
