@@ -460,9 +460,54 @@
 
 /* Responsive layout */
 
+/* =========================================================
+   RESPONSIVE LAYOUT
+========================================================= */
+
+.book-chat {
+  width: 100%;
+  min-width: 0;
+}
+
+.chat-main {
+  min-width: 0;
+}
+
+.chat-messages {
+  min-width: 0;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+/* Tablet */
+
+@media (max-width: 900px) {
+  .book-chat {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+
+  .conversation-sidebar {
+    padding: 18px 12px;
+  }
+
+  .chat-heading {
+    padding: 18px;
+  }
+
+  .chat-messages {
+    padding: 20px 16px;
+  }
+
+  .chat-message {
+    max-width: 92%;
+  }
+}
+
+/* Small tablet */
+
 @media (max-width: 760px) {
   .book-chat {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .conversation-sidebar {
@@ -472,17 +517,24 @@
   }
 
   .conversation-sidebar-label {
-    margin-top: 17px;
+    margin: 17px 0 10px;
   }
 
   .conversation-list {
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 8px;
+    padding-bottom: 8px;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
   }
 
   .conversation-item {
+    flex: 0 0 auto;
     width: auto;
-    max-width: 100%;
+    max-width: 240px;
   }
 
   .conversation-list-empty {
@@ -494,7 +546,7 @@
   }
 
   .chat-heading {
-    padding: 18px;
+    padding: 17px;
   }
 
   .chat-privacy {
@@ -502,7 +554,7 @@
   }
 
   .chat-messages {
-    padding: 20px 15px;
+    padding: 18px 15px;
   }
 
   .chat-form {
@@ -514,20 +566,104 @@
   }
 }
 
+/* Mobile */
+
 @media (max-width: 480px) {
-  .chat-message {
-    max-width: 95%;
+  .book-chat {
+    border-radius: 12px;
   }
 
-  .chat-empty {
-    padding: 20px 8px;
+  .conversation-sidebar {
+    padding: 13px;
+  }
+
+  .new-conversation-button {
+    min-height: 44px;
+  }
+
+  .conversation-item {
+    max-width: 210px;
+    min-height: 40px;
+  }
+
+  .chat-main {
+    min-height: 440px;
+  }
+
+  .chat-heading {
+    gap: 10px;
+    padding: 15px;
   }
 
   .chat-heading h2 {
     font-size: 15px;
   }
 
-  .chat-privacy {
+  .chat-heading p {
     font-size: 11px;
+  }
+
+  .chat-privacy {
+    margin: 12px 12px 0;
+    padding: 10px;
+    font-size: 11px;
+  }
+
+  .chat-messages {
+    min-height: 220px;
+    padding: 15px 11px;
+  }
+
+  .chat-message {
+    max-width: 96%;
+    padding: 11px 13px;
+    font-size: 12px;
+  }
+
+  .chat-form {
+    gap: 7px;
+    margin: 0 11px;
+    padding: 8px;
+  }
+
+  .chat-form textarea {
+    font-size: 16px;
+    resize: none;
+  }
+
+  .chat-form button {
+    width: 42px;
+    height: 42px;
+  }
+
+  .chat-error {
+    margin-right: 11px;
+    margin-left: 11px;
+  }
+
+  .chat-footnote {
+    margin: 10px 11px 13px;
+  }
+}
+
+/* Very small phones */
+
+@media (max-width: 360px) {
+  .chat-heading-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .chat-message {
+    max-width: 100%;
+  }
+
+  .chat-privacy {
+    gap: 7px;
+  }
+
+  .citation-list button {
+    max-width: 100%;
+    overflow-wrap: anywhere;
   }
 }

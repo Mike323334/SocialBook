@@ -427,3 +427,49 @@
     padding: 15px;
   }
 }
+
+@media (max-width: 768px) {
+  .ask-books-header {
+    align-items: flex-start;
+    gap: 15px;
+  }
+
+  .ask-books-header > div:first-child {
+    min-width: 0;
+  }
+
+  .ask-books-header-icon {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+@media (max-width: 480px) {
+  .ask-books-page {
+    width: 100%;
+    padding: 10px;
+  }
+
+  .ask-books-header {
+    gap: 10px;
+    padding: 16px;
+    border-radius: 14px;
+  }
+
+  .ask-books-header h1 {
+    font-size: 25px;
+    letter-spacing: -0.8px;
+  }
+
+  .ask-books-header p:not(.eyebrow) {
+    font-size: 13px;
+  }
+
+  .ask-books-book-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ask-books-book-option {
+    min-width: 0;
+  }
+}
