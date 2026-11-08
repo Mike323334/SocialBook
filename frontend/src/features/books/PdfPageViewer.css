@@ -1,0 +1,76 @@
+.pdf-page-viewer {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0 24px;
+}
+
+.pdf-viewer-status,
+.pdf-viewer-error {
+  width: 100%;
+  padding: 24px;
+  text-align: center;
+  color: var(--sb-ink);
+}
+
+.pdf-viewer-error {
+  color: #a33b3b;
+}
+
+.pdf-page-label {
+  width: 100%;
+  margin-bottom: 16px;
+  color: #7b827b;
+  font-size: 12px;
+  text-align: center;
+}
+
+.pdf-page-stage {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  background: white;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.08),
+    0 12px 35px rgba(0, 0, 0, 0.10);
+}
+
+.pdf-page-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.pdf-page-stage .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.pdf-page-stage .textLayer span,
+.pdf-page-stage .textLayer br {
+  cursor: text;
+}
+
+.pdf-page-stage .textLayer ::selection {
+  background: rgba(80, 130, 255, 0.3);
+}
+
+@media (max-width: 768px) {
+  .pdf-page-viewer {
+    padding: 8px 0 16px;
+  }
+
+  .pdf-page-stage {
+    max-width: 100%;
+  }
+}

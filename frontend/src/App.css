@@ -40,7 +40,9 @@
 }
 
 /* ---------- Left navigation sidebar ---------- */
-
+.sidebar {
+  background-color: #DCEBD9 !important;
+}
 .sidebar {
   position: sticky;
   top: 0;
@@ -56,13 +58,12 @@
 
   padding: 26px 16px 20px;
 
-  background: #ffffff;
-  border-right: 1px solid #e3e8df;
+  background-color: #DCEBD9;
+  border-right: 1px solid #cbdcc8;
 
   overflow-x: hidden;
   overflow-y: auto;
 }
-
 /* Brand at the top of the sidebar */
 
 .sidebar .brand {
@@ -74,7 +75,9 @@
   margin-bottom: 38px;
   padding: 0 8px;
 
-  color: #283d2d;
+  color: #315C3A;
+  background-color: #FFFFFF;
+
   font-family: var(--heading);
   font-size: 19px;
   font-weight: 700;
@@ -89,7 +92,8 @@
 }
 
 .sidebar .brand:hover {
-  color: #456449;
+  color: #315C3A;
+  background-color: #F5F8F4;
 }
 
 .brand-mark {
@@ -2696,4 +2700,485 @@
 .memory-sub-link:focus-visible {
   outline: 2px solid var(--sb-forest);
   outline-offset: 2px;
+}
+
+/* =========================================================
+   SOCIALBOOK — REFINED MEMORY NAVIGATION
+   ========================================================= */
+
+.memory-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 5px 0 9px;
+}
+
+.memory-nav-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  padding: 0 14px;
+  color: var(--sb-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease;
+}
+
+.memory-nav-trigger:hover {
+  color: var(--sb-forest);
+  background: rgba(69, 100, 73, 0.055);
+}
+
+.memory-nav-trigger.active {
+  color: var(--sb-forest);
+  background: rgba(69, 100, 73, 0.09);
+  border-color: rgba(69, 100, 73, 0.10);
+}
+
+.memory-nav-trigger > svg:first-child {
+  flex-shrink: 0;
+}
+
+.memory-nav-trigger span {
+  flex: 1;
+}
+
+.memory-nav-trigger > svg:last-child {
+  opacity: 0.65;
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease;
+}
+
+.memory-nav-trigger > svg:last-child.rotated {
+  transform: rotate(180deg);
+  opacity: 1;
+}
+
+.memory-nav-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 2px 0 4px 20px;
+  padding: 7px 8px 7px 13px;
+  border-left: 1px solid rgba(69, 100, 73, 0.20);
+  border-radius: 0 10px 10px 0;
+  background: rgba(69, 100, 73, 0.025);
+  animation: memoryMenuEnter 180ms ease both;
+}
+
+.memory-sub-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 39px;
+  padding: 0 11px;
+  color: var(--sb-muted);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 450;
+  text-decoration: none;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.memory-sub-link > svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+  transition: opacity 160ms ease;
+}
+
+.memory-sub-link:hover {
+  color: var(--sb-forest);
+  background: rgba(69, 100, 73, 0.065);
+  transform: translateX(2px);
+}
+
+.memory-sub-link.active {
+  color: var(--sb-forest);
+  background: rgba(69, 100, 73, 0.10);
+  border-color: rgba(69, 100, 73, 0.10);
+  font-weight: 600;
+}
+
+.memory-sub-link.active > svg {
+  opacity: 1;
+}
+
+.memory-nav-trigger:focus-visible,
+.memory-sub-link:focus-visible {
+  outline: 2px solid var(--sb-forest);
+  outline-offset: 3px;
+}
+
+@keyframes memoryMenuEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-nav-submenu {
+    animation: none;
+  }
+
+  .memory-nav-trigger,
+  .memory-sub-link,
+  .memory-nav-trigger > svg:last-child {
+    transition: none;
+  }
+}
+
+/* =========================================================
+   SOCIALBOOK — READER EXPERIENCE
+   ========================================================= */
+
+.reader-page {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 12px 0 40px;
+  color: var(--sb-ink);
+}
+
+.reader-header {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 28px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--sb-border);
+}
+
+.reader-header > div {
+  min-width: 0;
+}
+
+.reader-header h1 {
+  margin: 0 0 6px;
+  color: var(--sb-ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(25px, 3vw, 36px);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.7px;
+}
+
+.reader-header span {
+  display: block;
+  color: var(--sb-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+  color: var(--sb-forest);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: opacity 160ms ease;
+}
+
+.back-link:hover {
+  opacity: 0.7;
+}
+
+/* Main reader grid */
+
+.reader-layout {
+  display: grid;
+  grid-template-columns:
+    minmax(185px, 220px)
+    minmax(0, 1fr)
+    minmax(280px, 340px);
+  align-items: start;
+  gap: 24px;
+  width: 100%;
+}
+
+/* Chapters sidebar */
+
+.page-rail {
+  position: sticky;
+  top: 24px;
+  min-width: 0;
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  padding: 18px 13px;
+  background: #fff;
+  border: 1px solid var(--sb-border);
+  border-radius: 12px;
+  scrollbar-width: thin;
+}
+
+.page-rail > p {
+  margin: 0 0 14px;
+  padding: 0 8px;
+  color: var(--sb-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+}
+
+/* Generic chapter navigation elements */
+
+.page-rail a,
+.page-rail button {
+  max-width: 100%;
+  text-align: left;
+}
+
+.page-rail button {
+  cursor: pointer;
+}
+
+/* PDF reading area */
+
+.reader-sheet {
+  min-width: 0;
+  padding: 20px;
+  overflow: hidden;
+  background: #f5f5f1;
+  border: 1px solid var(--sb-border);
+  border-radius: 12px;
+}
+
+.reader-sheet .pdf-page-viewer {
+  padding-top: 4px;
+}
+
+/* Page navigation */
+
+.page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 17px;
+  border-top: 1px solid var(--sb-border);
+}
+
+.page-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 14px;
+  color: var(--sb-forest);
+  background: #fff;
+  border: 1px solid var(--sb-border);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.page-controls button:hover:not(:disabled) {
+  background: rgba(69, 100, 73, 0.07);
+  border-color: var(--sb-forest);
+}
+
+.page-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Tablet */
+
+@media (max-width: 1100px) {
+  .reader-layout {
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .reader-sheet {
+    padding: 16px;
+  }
+}
+
+/* Mobile */
+
+@media (max-width: 700px) {
+  .reader-page {
+    padding-top: 4px;
+  }
+
+  .reader-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 13px;
+    margin-bottom: 18px;
+  }
+
+  .reader-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 15px;
+  }
+
+  .page-rail {
+    position: static;
+    max-height: 260px;
+  }
+
+  .reader-sheet {
+    padding: 10px;
+  }
+
+  .page-controls {
+    flex-wrap: wrap;
+  }
+
+  .page-controls button {
+    flex: 1;
+  }
+}
+
+/* =========================================================
+   SOCIALBOOK — MEMORY MENU COLORS
+   ========================================================= */
+
+.memory-nav-group {
+  margin: 8px 0;
+  padding: 5px;
+  border-radius: 12px;
+  background: #f3f1e9;
+}
+
+.memory-nav-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  padding: 0 13px;
+  color: #526052;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+
+.memory-nav-trigger:hover {
+  color: #244c35;
+  background: #e8eadf;
+}
+
+.memory-nav-trigger.active {
+  color: #ffffff;
+  background: #365b43;
+  border-color: #365b43;
+}
+
+.memory-nav-trigger span {
+  flex: 1;
+}
+
+.memory-nav-trigger > svg:last-child {
+  transition: transform 180ms ease;
+}
+
+.memory-nav-trigger > svg:last-child.rotated {
+  transform: rotate(180deg);
+}
+
+.memory-nav-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 7px 0 4px 12px;
+  padding: 7px 0 7px 12px;
+  border-left: 2px solid #c5cfbd;
+}
+
+.memory-sub-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 11px;
+  color: #667466;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  text-decoration: none;
+  transition: all 180ms ease;
+}
+
+
+
+.memory-sub-link.active {
+  color: #244c35;
+  background: #dce5d6;
+  border-color: #cbd8c4;
+  font-weight: 700;
+}
+
+.memory-nav-trigger:focus-visible,
+.memory-sub-link:focus-visible {
+  outline: 2px solid #52775b;
+  outline-offset: 3px;
+}
+
+/* =========================================================
+   SIDEBAR — STAYS VISIBLE WHILE PAGE SCROLLS
+   ========================================================= */
+
+.app-shell {
+  align-items: flex-start;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  z-index: 20;
+}
+
+/* Keep the sidebar bottom section accessible */
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding-bottom: 20px;
 }

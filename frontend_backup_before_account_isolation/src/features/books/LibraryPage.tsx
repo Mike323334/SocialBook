@@ -267,8 +267,9 @@ export function ReaderPage() {
             <button type="button" disabled={pageNumber >= book.pageCount} onClick={() => setPageNumber((number) => number + 1)}>Next</button>
           </div>
         </article>
-        <BookChatPanel book={book} pages={pages} onCitationClick={setPageNumber} />
+        
       </div>
+      <BookChatPanel book={book} pages={pages} onCitationClick={setPageNumber} />
     </section>
   )
 }

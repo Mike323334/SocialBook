@@ -29,11 +29,17 @@ import {
 
 import { BookChatPanel } from '../chat/BookChatPanel'
 import { trackAnalyticsEvent } from '../analytics/analyticsClient'
+
 import { OUTLINE_VERSION } from './tocParser'
+import { PdfPageViewer } from './PdfPageViewer'
 
 type StoredBook = DocumentRecord & {
   outlineVersion?: number
 }
+
+// ============================================================
+// HELPERS
+// ============================================================
 
 function formatSize(bytes: number): string {
   return bytes < 1024 * 1024
@@ -66,13 +72,17 @@ export function LibraryPage() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
+  // ----------------------------------------------------------
+  // ADD PDF
+  // ----------------------------------------------------------
+
   async function addFile(file?: File) {
     if (!file) return
 
-    // Keep this database reference throughout the entire import.
     const operationDatabase = db
 
     setError('')
+
     setMessage(
       'Extracting text and saving this book on your device...',
     )
@@ -88,8 +98,7 @@ export function LibraryPage() {
         operationDatabase,
       )
 
-      // Do not update an account's UI with results from
-      // an operation started under a previous account.
+      // Avoid updating the UI if the active account changed.
       if (!isActiveDatabase(operationDatabase)) {
         return
       }
@@ -124,11 +133,19 @@ export function LibraryPage() {
     }
   }
 
+  // ----------------------------------------------------------
+  // FILE INPUT
+  // ----------------------------------------------------------
+
   function handleFileChange(
     event: ChangeEvent<HTMLInputElement>,
   ) {
     void addFile(event.currentTarget.files?.[0])
   }
+
+  // ----------------------------------------------------------
+  // DRAG AND DROP
+  // ----------------------------------------------------------
 
   function handleDrop(
     event: DragEvent<HTMLDivElement>,
@@ -140,10 +157,14 @@ export function LibraryPage() {
     void addFile(event.dataTransfer.files[0])
   }
 
+  // ----------------------------------------------------------
+  // REMOVE BOOK
+  // ----------------------------------------------------------
+
   async function removeBook(book: DocumentRecord) {
     if (
       !window.confirm(
-        `Remove “${book.title}” and its locally stored pages?`,
+        `Remove "${book.title}" and its locally stored pages?`,
       )
     ) {
       return
@@ -163,7 +184,7 @@ export function LibraryPage() {
           operationDatabase.memoryEmbeddings,
           operationDatabase.notes,
         ],
-  async () => {
+        async () => {
           // Delete the document.
           await operationDatabase.documents.delete(book.id)
 
@@ -173,7 +194,7 @@ export function LibraryPage() {
             .equals(book.id)
             .delete()
 
-          // Find all conversations belonging to this document.
+          // Find conversations belonging to this document.
           const conversations =
             await operationDatabase.conversations
               .where('documentId')
@@ -186,8 +207,7 @@ export function LibraryPage() {
             .equals(book.id)
             .delete()
 
-          // Also remove messages associated with the conversations.
-          // This handles any legacy records with inconsistent document IDs.
+          // Handle legacy messages with inconsistent document IDs.
           for (const conversation of conversations) {
             await operationDatabase.messages
               .where('conversationId')
@@ -195,7 +215,7 @@ export function LibraryPage() {
               .delete()
           }
 
-          // Delete all conversations belonging to this document.
+          // Delete conversations.
           await operationDatabase.conversations
             .where('documentId')
             .equals(book.id)
@@ -213,7 +233,7 @@ export function LibraryPage() {
             .equals(book.id)
             .delete()
 
-          // Delete private notes associated with this document.
+          // Delete private notes.
           await operationDatabase.notes
             .where('documentId')
             .equals(book.id)
@@ -226,8 +246,10 @@ export function LibraryPage() {
       }
 
       setMessage(
-        `“${book.title}” was removed from this device.`,
+        `"${book.title}" was removed from this device.`,
       )
+
+      setError('')
     } catch (cause) {
       if (!isActiveDatabase(operationDatabase)) {
         return
@@ -240,6 +262,10 @@ export function LibraryPage() {
       )
     }
   }
+
+  // ----------------------------------------------------------
+  // LIBRARY UI
+  // ----------------------------------------------------------
 
   return (
     <section
@@ -413,8 +439,8 @@ export function LibraryPage() {
 // ============================================================
 
 /**
- * Index of the entry the reader is currently inside:
- * the last entry that starts on or before this page.
+ * Returns the last outline entry that starts on or before
+ * the currently selected page.
  */
 function findActiveIndex(
   items: OutlineItem[],
@@ -433,6 +459,10 @@ function findActiveIndex(
 
   return active
 }
+
+// ============================================================
+// OUTLINE LIST
+// ============================================================
 
 function OutlineList({
   items,
@@ -503,8 +533,15 @@ export function ReaderPage() {
 
   const [missing, setMissing] = useState(false)
 
+  // ----------------------------------------------------------
+  // LOAD BOOK AND OUTLINE
+  // ----------------------------------------------------------
+
   useEffect(() => {
     if (!id) return
+
+    // Keep a validated ID for all asynchronous operations.
+    const documentId = id
 
     let cancelled = false
 
@@ -519,11 +556,11 @@ export function ReaderPage() {
     async function loadBook() {
       try {
         const [record, records] = await Promise.all([
-          operationDatabase.documents.get(id!),
+          operationDatabase.documents.get(documentId),
 
           operationDatabase.pages
             .where('documentId')
-            .equals(id!)
+            .equals(documentId)
             .sortBy('pageNumber'),
         ])
 
@@ -537,8 +574,9 @@ export function ReaderPage() {
         setBook(record)
         setPages(records)
 
+        // Update last-read timestamp.
         await operationDatabase.documents.update(
-          id!,
+          documentId,
           {
             lastReadAt: new Date(),
           },
@@ -546,8 +584,7 @@ export function ReaderPage() {
 
         if (cancelled) return
 
-        // Books saved without chapters, or with an outdated
-        // outline format, are processed again from their PDF.
+        // Check whether the stored outline needs updating.
         const stored: StoredBook = record
 
         const outdated =
@@ -560,6 +597,7 @@ export function ReaderPage() {
         const needsOutline =
           !stored.outline || outdated
 
+        // Re-extract the outline from the original PDF if needed.
         if (needsOutline && stored.pdf) {
           const pageTexts = records.map(
             (page) => page.text,
@@ -581,10 +619,9 @@ export function ReaderPage() {
               outlineVersion: OUTLINE_VERSION,
             }
 
-            // Always write to the database captured at the
-            // beginning of this reader operation.
+            // Write to the database captured at operation start.
             await operationDatabase.documents.update(
-              id!,
+              documentId,
               patch,
             )
 
@@ -599,8 +636,13 @@ export function ReaderPage() {
                   }
                 : current,
             )
-          } catch {
-            // Leave the stored outline unchanged.
+          } catch (cause) {
+            console.error(
+              'Could not extract the PDF outline:',
+              cause,
+            )
+
+            // Keep the existing outline.
             // The next visit can retry extraction.
           }
         }
@@ -623,6 +665,10 @@ export function ReaderPage() {
     }
   }, [id, db])
 
+  // ----------------------------------------------------------
+  // OUTLINE STATE
+  // ----------------------------------------------------------
+
   const outline = book?.outline
 
   const hasOutline = Boolean(
@@ -639,6 +685,10 @@ export function ReaderPage() {
     [outline, pageNumber],
   )
 
+  // ----------------------------------------------------------
+  // MISSING BOOK
+  // ----------------------------------------------------------
+
   if (missing) {
     return (
       <section className="reader-loading">
@@ -653,6 +703,10 @@ export function ReaderPage() {
     )
   }
 
+  // ----------------------------------------------------------
+  // LOADING BOOK
+  // ----------------------------------------------------------
+
   if (!book) {
     return (
       <section className="reader-loading">
@@ -666,12 +720,23 @@ export function ReaderPage() {
     )
   }
 
+  // ----------------------------------------------------------
+  // CURRENT PAGE
+  // ----------------------------------------------------------
+
   const currentPage = pages.find(
     (page) => page.pageNumber === pageNumber,
   )
 
+  // ----------------------------------------------------------
+  // READER UI
+  // ----------------------------------------------------------
+
   return (
     <section className="reader-page">
+
+      {/* READER HEADER */}
+
       <header className="reader-header">
         <Link
           to="/library"
@@ -689,7 +754,12 @@ export function ReaderPage() {
         </div>
       </header>
 
+      {/* MAIN READER LAYOUT */}
+
       <div className="reader-layout">
+
+        {/* LEFT SIDEBAR: CHAPTERS OR PAGES */}
+
         <nav
           className="page-rail"
           aria-label={
@@ -726,27 +796,43 @@ export function ReaderPage() {
           )}
         </nav>
 
+        {/* CENTER: ORIGINAL PDF READER */}
+
         <article
           className="reader-sheet"
           aria-label={`Page ${pageNumber}`}
         >
-          <div className="page-kicker">
-            {book.title}
-            {' '}
-            <span>·</span>
-            {' '}
-            {pageNumber}
-          </div>
-
-          {currentPage?.text ? (
-            <p className="page-text">
-              {currentPage.text}
-            </p>
+          {book.pdf ? (
+            <PdfPageViewer
+              pdf={book.pdf as Blob}
+              pageNumber={pageNumber}
+              title={book.title}
+            />
           ) : (
-            <p className="page-no-text">
-              No selectable text was extracted from this page.
-            </p>
+            <>
+              {/* FALLBACK FOR BOOKS WITHOUT ORIGINAL PDF */}
+
+              <div className="page-kicker">
+                {book.title}
+                {' '}
+                <span>·</span>
+                {' '}
+                {pageNumber}
+              </div>
+
+              {currentPage?.text ? (
+                <p className="page-text">
+                  {currentPage.text}
+                </p>
+              ) : (
+                <p className="page-no-text">
+                  No selectable text was extracted from this page.
+                </p>
+              )}
+            </>
           )}
+
+          {/* PAGE NAVIGATION */}
 
           <div className="page-controls">
             <button
@@ -775,12 +861,16 @@ export function ReaderPage() {
           </div>
         </article>
 
-        <BookChatPanel
+        {/* RIGHT SIDEBAR: AI BOOK CHAT */}
+
+        
+      </div>
+      <BookChatPanel
           book={book}
           pages={pages}
           onCitationClick={setPageNumber}
         />
-      </div>
+
     </section>
   )
 }
