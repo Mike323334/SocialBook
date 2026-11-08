@@ -3533,3 +3533,27 @@
     font-size: 11px;
   }
 }
+
+@media (max-width: 760px) {
+  .sidebar {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .sidebar nav {
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .sidebar nav > .nav-link,
+  .sidebar .memory-nav-group {
+    flex-shrink: 0;
+  }
+
+  .sidebar nav::-webkit-scrollbar {
+    display: none;
+  }
+}
