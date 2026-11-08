@@ -1,4 +1,4 @@
-from typing import Literal, Self
+﻿from typing import Literal, Self
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, model_validator
@@ -58,7 +58,7 @@ async def chat(request: ChatRequest, settings: Settings = Depends(get_settings))
         source_description = f'Book passage: {item.title}, page {item.page_number}'
         formatted_sources.append(f'[S{index}] {source_description}\n{item.text}')
     formatted_context = '\n\n'.join(formatted_sources)
-    answer = await answer_from_context(settings, request.question.strip(), formatted_context)
+    answer = await answer_from_context(request.question.strip(), formatted_context)
     citations = [
         Citation(
             source_type=item.source_type,
