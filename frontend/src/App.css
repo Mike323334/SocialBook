@@ -3194,3 +3194,52 @@
   margin-top: auto;
   padding-bottom: 20px;
 }
+
+/* MOBILE: REDUCE SPACE BETWEEN NAVIGATION AND CONTENT */
+@media (max-width: 760px) {
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sidebar {
+    position: relative;
+    top: auto;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    padding: 12px 14px;
+    overflow: visible;
+  }
+
+  .sidebar nav {
+    margin-bottom: 0;
+  }
+
+  .sidebar-bottom {
+    margin-top: 12px;
+    padding-bottom: 0;
+  }
+
+  .app-main {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .topbar {
+    min-height: 54px;
+  }
+
+  .app-content {
+    padding-top: 12px;
+  }
+
+  .content-wrap {
+    margin-top: 0;
+    padding-top: 0;
+  }
+}
