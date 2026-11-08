@@ -3243,3 +3243,140 @@
     padding-top: 0;
   }
 }
+
+/* =================================
+   MOBILE HORIZONTAL NAVIGATION
+================================= */
+
+@media (max-width: 760px) {
+
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 100dvh;
+  }
+
+  .sidebar {
+    position: relative;
+    top: auto;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    padding: 12px 14px;
+    overflow: visible;
+  }
+
+  /* Keep brand above the navigation */
+  .sidebar .brand {
+    margin-bottom: 12px;
+  }
+
+  /* Horizontal navigation */
+  .sidebar nav {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+
+    width: 100%;
+    min-width: 0;
+
+    overflow-x: auto;
+    overflow-y: hidden;
+
+    padding-bottom: 8px;
+
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sidebar nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Navigation links */
+  .sidebar nav > .nav-link {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: max-content;
+    min-height: 42px;
+    padding: 0 14px;
+    white-space: nowrap;
+  }
+
+  /* Memory navigation */
+  .memory-nav-group {
+    position: relative;
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0;
+    padding: 0;
+  }
+
+  .memory-nav-trigger {
+    width: auto;
+    min-width: max-content;
+    white-space: nowrap;
+  }
+
+  .memory-nav-submenu {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    margin: 5px 0;
+    padding: 5px 0;
+    border-left: none;
+    overflow-x: auto;
+  }
+
+  .memory-sub-link {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  /* Main content */
+  .app-main {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .app-content {
+    width: 100%;
+    padding-top: 12px;
+  }
+
+  .content-wrap {
+    width: 100%;
+    max-width: 100%;
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  .sidebar-bottom {
+    margin-top: 8px;
+    padding-bottom: 0;
+  }
+}
+
+/* Extra-small phones */
+@media (max-width: 380px) {
+  .sidebar {
+    padding: 10px;
+  }
+
+  .sidebar nav {
+    gap: 6px;
+  }
+
+  .sidebar nav > .nav-link {
+    min-height: 40px;
+    padding: 0 11px;
+    font-size: 12px;
+  }
+}
