@@ -1,3 +1,4 @@
+
 import Dexie, { type EntityTable } from 'dexie'
 
 export interface OutlineItem {
@@ -17,8 +18,6 @@ export interface DocumentRecord {
   lastReadAt: Date | null
   readingProgress: number
   pdf: Blob
-
-  // PDF table of contents and its parser version.
   outline?: OutlineItem[]
   outlineVersion?: number
 }
@@ -104,11 +103,13 @@ export class ReadingMemoryDB extends Dexie {
   constructor(name = 'ReadingMemoryDB') {
     super(name)
 
+    // Version 1
     this.version(1).stores({
       documents: 'id, title, createdAt, lastReadAt',
       pages: 'id, documentId, [documentId+pageNumber]',
     })
 
+    // Version 2
     this.version(2).stores({
       documents: 'id, title, createdAt, lastReadAt',
       pages: 'id, documentId, [documentId+pageNumber]',
@@ -117,6 +118,7 @@ export class ReadingMemoryDB extends Dexie {
         'id, conversationId, documentId, createdAt, status, [conversationId+createdAt]',
     })
 
+    // Version 3
     this.version(3)
       .stores({
         documents: 'id, title, createdAt, lastReadAt',
@@ -171,6 +173,7 @@ export class ReadingMemoryDB extends Dexie {
         await transaction.table('conversations').bulkPut(conversations)
       })
 
+    // Version 4
     this.version(4)
       .stores({
         documents: 'id, title, createdAt, lastReadAt',
@@ -198,6 +201,7 @@ export class ReadingMemoryDB extends Dexie {
         await transaction.table('conversations').bulkPut(conversations)
       })
 
+    // Version 5
     this.version(5).stores({
       documents: 'id, title, createdAt, lastReadAt',
       pages: 'id, documentId, [documentId+pageNumber]',
@@ -207,10 +211,12 @@ export class ReadingMemoryDB extends Dexie {
       importedMemories: 'id, documentId, category, importedAt',
     })
 
+    // Version 6
     this.version(6).stores({
       importedMemories: null,
     })
 
+    // Version 7
     this.version(7).stores({
       documents: 'id, title, createdAt, lastReadAt',
       pages: 'id, documentId, [documentId+pageNumber]',
@@ -222,6 +228,7 @@ export class ReadingMemoryDB extends Dexie {
       memoryEmbeddings: 'id, documentId, model',
     })
 
+    // Version 8
     this.version(8).stores({
       documents: 'id, title, createdAt, lastReadAt',
       pages: 'id, documentId, [documentId+pageNumber]',
@@ -236,4 +243,123 @@ export class ReadingMemoryDB extends Dexie {
   }
 }
 
+// ============================================================
+// LEGACY DATABASE
+// ============================================================
+
+// Keep the original database intact.
+// Do not use it for account-specific application operations.
 export const database = new ReadingMemoryDB()
+
+// ============================================================
+// ACCOUNT-SCOPED DATABASE MANAGEMENT
+// ============================================================
+
+
+// -----------------------------------------------------------------------------
+// Account-isolated database management
+// -----------------------------------------------------------------------------
+
+const accountDatabases = new Map<string, ReadingMemoryDB>()
+
+let activeDatabase: ReadingMemoryDB | null = null
+
+let activationSequence = 0
+
+/**
+ * Returns the IndexedDB name associated with an account.
+ *
+ * Guest users have their own database.
+ * Authenticated users receive a database based on their stable account ID.
+ */
+export function getDatabaseNameForAccount(
+  accountId: string | null,
+): string {
+  if (!accountId) {
+    return 'ReadingMemoryDB_guest'
+  }
+
+  const normalizedId = accountId.trim()
+
+  if (!normalizedId) {
+    return 'ReadingMemoryDB_guest'
+  }
+
+  return `ReadingMemoryDB_user_${encodeURIComponent(normalizedId)}`
+}
+
+/**
+ * Returns the cached database instance for an account.
+ *
+ * The legacy singleton "database" is intentionally not reused.
+ */
+export function getDatabaseForAccount(
+  accountId: string | null,
+): ReadingMemoryDB {
+  const databaseName = getDatabaseNameForAccount(accountId)
+
+  const existingDatabase = accountDatabases.get(databaseName)
+
+  if (existingDatabase) {
+    return existingDatabase
+  }
+
+  const accountDatabase = new ReadingMemoryDB(databaseName)
+
+  accountDatabases.set(databaseName, accountDatabase)
+
+  return accountDatabase
+}
+
+/**
+ * Activates and opens the database belonging to an account.
+ *
+ * A generation counter prevents an older asynchronous activation
+ * from replacing a newer account selection.
+ */
+export async function activateDatabase(
+  accountId: string | null,
+): Promise<ReadingMemoryDB> {
+  const currentActivation = ++activationSequence
+
+  const targetDatabase = getDatabaseForAccount(accountId)
+
+  await targetDatabase.open()
+
+  if (currentActivation !== activationSequence) {
+    throw new Error(
+      'Database activation was superseded by another account switch.',
+    )
+  }
+
+  activeDatabase = targetDatabase
+
+  return targetDatabase
+}
+
+/**
+ * Returns the currently active account database.
+ *
+ * Components should capture this reference once per operation.
+ */
+export function getActiveDatabase(): ReadingMemoryDB {
+  if (!activeDatabase) {
+    throw new Error(
+      'No account database is active. Wait for workspace initialization.',
+    )
+  }
+
+  return activeDatabase
+}
+
+/**
+ * Checks whether a database reference still belongs to the active account.
+ *
+ * Useful for preventing stale asynchronous operations from updating
+ * the interface after an account switch.
+ */
+export function isActiveDatabase(
+  candidateDatabase: ReadingMemoryDB,
+): boolean {
+  return activeDatabase === candidateDatabase
+}

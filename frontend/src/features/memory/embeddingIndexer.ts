@@ -1,4 +1,8 @@
-import { database } from '../../db/database'
+import {
+  getActiveDatabase,
+  type ReadingMemoryDB,
+} from '../../db/database'
+
 import { generateEmbedding } from './embeddings'
 
 const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2'
@@ -11,8 +15,12 @@ export interface EmbeddingProgress {
 export async function indexDocumentEmbeddings(
   documentId: string,
   onProgress?: (progress: EmbeddingProgress) => void,
+  db: ReadingMemoryDB = getActiveDatabase(),
 ): Promise<number> {
-  const chunks = await database.memoryChunks
+  // Keep this operation bound to the database captured at invocation.
+  const operationDatabase = db
+
+  const chunks = await operationDatabase.memoryChunks
     .where('documentId')
     .equals(documentId)
     .toArray()
@@ -21,25 +29,25 @@ export async function indexDocumentEmbeddings(
     return 0
   }
 
-  const existingEmbeddings = await database.memoryEmbeddings
-    .where('documentId')
-    .equals(documentId)
-    .toArray()
+  const existingEmbeddings =
+    await operationDatabase.memoryEmbeddings
+      .where('documentId')
+      .equals(documentId)
+      .toArray()
 
   const existingIds = new Set(
     existingEmbeddings
       .filter(
-        embedding => embedding.model === EMBEDDING_MODEL,
+        (embedding) => embedding.model === EMBEDDING_MODEL,
       )
-      .map(embedding => embedding.id),
+      .map((embedding) => embedding.id),
   )
 
   const chunksToProcess = chunks.filter(
-    chunk => !existingIds.has(chunk.id),
+    (chunk) => !existingIds.has(chunk.id),
   )
 
-  let completed =
-    chunks.length - chunksToProcess.length
+  let completed = chunks.length - chunksToProcess.length
 
   onProgress?.({
     completed,
@@ -49,7 +57,7 @@ export async function indexDocumentEmbeddings(
   for (const chunk of chunksToProcess) {
     const embedding = await generateEmbedding(chunk.text)
 
-    await database.memoryEmbeddings.put({
+    await operationDatabase.memoryEmbeddings.put({
       id: chunk.id,
       documentId,
       model: EMBEDDING_MODEL,

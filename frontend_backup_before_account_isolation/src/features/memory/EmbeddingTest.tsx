@@ -1,0 +1,1117 @@
+import { useEffect, useState } from 'react'
+import {
+  database,
+  type DocumentRecord,
+} from '../../db/database'
+import {
+  loadSemanticData,
+  searchLoadedSemanticData,
+} from './semanticSearch'
+import {
+  analyzeRelationship,
+  type RelationshipAnalysis,
+} from './comparisonAnalyzer'
+
+/*
+ * Lower value = more semantic candidates.
+ *
+ * Groq performs the final meaningfulness check.
+ */
+const SEMANTIC_MIN_SIMILARITY = 0.30
+
+/*
+ * Number of semantic matches retrieved
+ * for each passage.
+ */
+const CANDIDATES_PER_CHUNK = 8
+
+/*
+ * Maximum candidates retained for each
+ * comparison book.
+ */
+const LOCAL_CANDIDATES_PER_BOOK = 100
+
+/*
+ * Maximum candidates sent to Groq.
+ */
+const MAX_GROQ_ANALYSES = 40
+
+/*
+ * How often we yield control back to the
+ * browser during semantic comparison.
+ *
+ * This prevents the page from becoming
+ * completely unresponsive.
+ */
+const YIELD_EVERY_CHUNKS = 5
+
+interface CandidateRelationship {
+  queryChunkId: string
+  matchedChunkId: string
+
+  query: {
+    documentId: string
+    documentTitle: string
+    pageNumber: number
+    text: string
+  }
+
+  matched: {
+    documentId: string
+    documentTitle: string
+    pageNumber: number
+    text: string
+  }
+
+  similarity: number
+}
+
+interface RelationshipResult
+  extends CandidateRelationship {
+  analysis: RelationshipAnalysis
+}
+
+/*
+ * Give the browser a chance to process UI
+ * events and repaint.
+ */
+function yieldToBrowser(): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, 0)
+  })
+}
+
+function getBookTitleParts(title: string) {
+  const separatorIndex =
+    title.indexOf(':')
+
+  if (separatorIndex === -1) {
+    return {
+      title,
+      subtitle: '',
+    }
+  }
+
+  return {
+    title: title
+      .slice(0, separatorIndex)
+      .trim(),
+
+    subtitle: title
+      .slice(separatorIndex + 1)
+      .trim(),
+  }
+}
+
+function BookTitle({
+  title,
+}: {
+  title: string
+}) {
+  const parts =
+    getBookTitleParts(title)
+
+  return (
+    <div>
+      <div className="font-semibold">
+        {parts.title}
+      </div>
+
+      {parts.subtitle && (
+        <div className="text-sm text-gray-500">
+          {parts.subtitle}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function EmbeddingTest() {
+  const [
+    selectedBookId,
+    setSelectedBookId,
+  ] = useState('')
+
+const [books, setBooks] =
+  useState<DocumentRecord[]>([])
+
+  const [loading, setLoading] =
+    useState(false)
+
+  const [status, setStatus] =
+    useState('')
+
+  const [results, setResults] =
+    useState<RelationshipResult[]>([])
+
+  const [
+    expandedRelationship,
+    setExpandedRelationship,
+  ] = useState<string | null>(null)
+
+  /*
+   * Load books.
+   */
+  useEffect(() => {
+    async function loadBooks() {
+      const documents =
+        await database.documents.toArray()
+
+      setBooks(documents)
+    }
+
+    void loadBooks()
+  }, [])
+
+  async function compareBooks() {
+    if (!selectedBookId) {
+      return
+    }
+
+    setLoading(true)
+    setResults([])
+    setExpandedRelationship(null)
+
+    try {
+      /*
+       * ==========================================
+       * LOAD SELECTED BOOK
+       * ==========================================
+       */
+      setStatus(
+        'Loading selected book...',
+      )
+
+      const selectedBook =
+        await database.documents.get(
+          selectedBookId,
+        )
+
+      if (!selectedBook) {
+        throw new Error(
+          'Selected book was not found.',
+        )
+      }
+
+      /*
+       * ==========================================
+       * FIND OTHER BOOKS
+       * ==========================================
+       */
+      const allDocuments =
+        await database.documents.toArray()
+
+      const otherBooks =
+        allDocuments.filter(
+          document =>
+            document.id !==
+            selectedBookId,
+        )
+
+      if (otherBooks.length === 0) {
+        setStatus(
+          'You need at least two books to compare.',
+        )
+
+        return
+      }
+
+      /*
+       * ==========================================
+       * LOAD EXISTING EMBEDDINGS
+       * ==========================================
+       *
+       * IMPORTANT:
+       *
+       * We DO NOT call generateEmbedding()
+       * during comparison anymore.
+       *
+       * The embeddings already stored in
+       * IndexedDB are reused.
+       */
+      setStatus(
+        'Loading stored embeddings...',
+      )
+
+      const semanticData =
+        await loadSemanticData()
+
+      /*
+       * ==========================================
+       * LOAD SELECTED BOOK CHUNKS
+       * ==========================================
+       */
+      const queryChunks =
+        await database.memoryChunks
+          .where('documentId')
+          .equals(selectedBookId)
+          .toArray()
+
+      if (queryChunks.length === 0) {
+        setStatus(
+          'This book does not have indexed chunks yet.',
+        )
+
+        return
+      }
+
+      /*
+       * ==========================================
+       * CREATE EMBEDDING LOOKUP
+       * ==========================================
+       *
+       * Embedding IDs are the same as chunk IDs.
+       *
+       * This lets us find the stored vector
+       * instantly instead of generating it again.
+       */
+      const embeddingByChunkId =
+        new Map<
+          string,
+          Float32Array
+        >()
+
+      for (
+        const embedding of
+        semanticData.embeddings
+      ) {
+        embeddingByChunkId.set(
+          embedding.id,
+          embedding.vector,
+        )
+      }
+
+      /*
+       * ==========================================
+       * CANDIDATE BUCKETS
+       * ==========================================
+       */
+      const candidatesByBook =
+        new Map<
+          string,
+          CandidateRelationship[]
+        >()
+
+      for (const book of otherBooks) {
+        candidatesByBook.set(
+          book.id,
+          [],
+        )
+      }
+
+      /*
+       * ==========================================
+       * LOCAL SEMANTIC SEARCH
+       * ==========================================
+       *
+       * We reuse existing embeddings.
+       *
+       * No Transformers.js model is called here.
+       */
+      let chunksWithoutEmbeddings = 0
+
+      for (
+        let index = 0;
+        index < queryChunks.length;
+        index += 1
+      ) {
+        const queryChunk =
+          queryChunks[index]
+
+        /*
+         * Get the embedding already stored
+         * in IndexedDB.
+         */
+        const queryEmbedding =
+          embeddingByChunkId.get(
+            queryChunk.id,
+          )
+
+        /*
+         * This should normally never happen
+         * if indexing completed correctly.
+         */
+        if (!queryEmbedding) {
+          chunksWithoutEmbeddings += 1
+          continue
+        }
+
+        /*
+         * Only update the UI every few chunks.
+         *
+         * Updating React state for every chunk
+         * creates unnecessary work.
+         */
+        if (
+          index % YIELD_EVERY_CHUNKS ===
+          0
+        ) {
+          setStatus(
+            `Comparing passages ${index + 1}/${queryChunks.length}...`,
+          )
+
+          /*
+           * Give the browser time to repaint
+           * and process clicks/events.
+           */
+          await yieldToBrowser()
+        }
+
+        /*
+         * Search the already-loaded vectors.
+         */
+        const matches =
+          searchLoadedSemanticData(
+            queryEmbedding,
+            semanticData,
+            {
+              /*
+               * Never compare the selected book
+               * against itself.
+               */
+              excludeDocumentId:
+                selectedBookId,
+
+              /*
+               * Retrieve several candidates.
+               */
+              limit:
+                CANDIDATES_PER_CHUNK,
+
+              /*
+               * Favor recall.
+               */
+              minSimilarity:
+                SEMANTIC_MIN_SIMILARITY,
+            },
+          )
+
+        /*
+         * Put matches into their respective
+         * comparison-book buckets.
+         */
+        for (const match of matches) {
+          const bucket =
+            candidatesByBook.get(
+              match.documentId,
+            )
+
+          if (!bucket) {
+            continue
+          }
+
+          /*
+           * Only remove an exact duplicate
+           * passage pair.
+           */
+          const duplicate =
+            bucket.some(
+              existing =>
+                existing.queryChunkId ===
+                  queryChunk.id &&
+                existing.matchedChunkId ===
+                  match.chunkId,
+            )
+
+          if (duplicate) {
+            continue
+          }
+
+          bucket.push({
+            queryChunkId:
+              queryChunk.id,
+
+            matchedChunkId:
+              match.chunkId,
+
+            query: {
+              documentId:
+                selectedBookId,
+
+              documentTitle:
+                selectedBook.title,
+
+              pageNumber:
+                queryChunk.pageNumber,
+
+              text:
+                queryChunk.text,
+            },
+
+            matched: {
+              documentId:
+                match.documentId,
+
+              documentTitle:
+                match.documentTitle,
+
+              pageNumber:
+                match.pageNumber,
+
+              text:
+                match.text,
+            },
+
+            similarity:
+              match.similarity,
+          })
+        }
+      }
+
+      if (
+        chunksWithoutEmbeddings > 0
+      ) {
+        console.warn(
+          `[Comparison] ${chunksWithoutEmbeddings} chunks did not have stored embeddings.`,
+        )
+      }
+
+      /*
+       * ==========================================
+       * LOCAL CANDIDATE SELECTION
+       * ==========================================
+       */
+      const localCandidates: CandidateRelationship[] =
+        []
+
+      for (const book of otherBooks) {
+        const bucket =
+          candidatesByBook.get(
+            book.id,
+          ) ?? []
+
+        /*
+         * Highest semantic similarity first.
+         */
+        bucket.sort(
+          (a, b) =>
+            b.similarity -
+            a.similarity,
+        )
+
+        /*
+         * Keep the strongest candidates
+         * for each individual book.
+         */
+        const selected =
+          bucket.slice(
+            0,
+            LOCAL_CANDIDATES_PER_BOOK,
+          )
+
+        localCandidates.push(
+          ...selected,
+        )
+
+        console.log(
+          `[Semantic Search] ${book.title}: ${selected.length} candidates`,
+        )
+      }
+
+      /*
+       * Sort all candidates by similarity.
+       */
+      localCandidates.sort(
+        (a, b) =>
+          b.similarity -
+          a.similarity,
+      )
+
+      console.log(
+        `[Comparison] Total local candidates: ${localCandidates.length}`,
+      )
+
+      /*
+       * ==========================================
+       * GROQ CANDIDATES
+       * ==========================================
+       */
+      const groqCandidates =
+        localCandidates.slice(
+          0,
+          MAX_GROQ_ANALYSES,
+        )
+
+      console.log(
+        `[Comparison] Sending ${groqCandidates.length} candidates to Groq`,
+      )
+
+      setStatus(
+        `Found ${localCandidates.length} semantic candidates. Analyzing ${groqCandidates.length} with AI...`,
+      )
+
+      /*
+       * ==========================================
+       * GROQ RELATIONSHIP ANALYSIS
+       * ==========================================
+       */
+      const finalResults:
+        RelationshipResult[] =
+          []
+
+      for (
+        let index = 0;
+        index < groqCandidates.length;
+        index += 1
+      ) {
+        const candidate =
+          groqCandidates[index]
+
+        setStatus(
+          `AI relationship analysis ${index + 1}/${groqCandidates.length}...`,
+        )
+
+        try {
+          const analysis =
+            await analyzeRelationship({
+              queryBook:
+                candidate.query
+                  .documentTitle,
+
+              queryPage:
+                candidate.query
+                  .pageNumber,
+
+              queryPassage:
+                candidate.query.text,
+
+              matchedBook:
+                candidate.matched
+                  .documentTitle,
+
+              matchedPage:
+                candidate.matched
+                  .pageNumber,
+
+              matchedPassage:
+                candidate.matched
+                  .text,
+
+              similarity:
+                candidate.similarity,
+            })
+
+          /*
+           * Groq rejected the relationship.
+           */
+          if (!analysis.meaningful) {
+            continue
+          }
+
+          /*
+           * Exact passage-pair deduplication.
+           */
+          const duplicate =
+            finalResults.some(
+              existing =>
+                existing.queryChunkId ===
+                  candidate.queryChunkId &&
+                existing.matchedChunkId ===
+                  candidate.matchedChunkId,
+            )
+
+          if (duplicate) {
+            continue
+          }
+
+          const relationship: RelationshipResult =
+            {
+              ...candidate,
+              analysis,
+            }
+
+          finalResults.push(
+            relationship,
+          )
+
+          /*
+           * Display the new relationship
+           * immediately.
+           */
+          setResults([
+            ...finalResults,
+          ])
+
+          /*
+           * Give the browser time to render
+           * the new bubble.
+           */
+          await yieldToBrowser()
+        } catch (error) {
+          console.error(
+            'Relationship analysis failed:',
+            error,
+          )
+
+          /*
+           * Stop gracefully if Groq rate
+           * limiting occurs.
+           */
+          if (
+            error instanceof Error &&
+            error.message.includes(
+              '429',
+            )
+          ) {
+            setStatus(
+              'Groq rate limit reached. AI analysis stopped.',
+            )
+
+            break
+          }
+        }
+      }
+
+      /*
+       * ==========================================
+       * FINAL RESULTS
+       * ==========================================
+       */
+      const sortedResults =
+        [...finalResults].sort(
+          (a, b) =>
+            b.similarity -
+            a.similarity,
+        )
+
+      setResults(
+        sortedResults,
+      )
+
+      if (sortedResults.length > 0) {
+        setStatus(
+          `Finished. Found ${sortedResults.length} meaningful relationships.`,
+        )
+      } else {
+        setStatus(
+          'Finished. No meaningful relationships were confirmed by AI.',
+        )
+      }
+    } catch (error) {
+      console.error(
+        'Book comparison failed:',
+        error,
+      )
+
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : 'Book comparison failed.',
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* ==========================================
+          HEADER
+          ========================================== */}
+      <div>
+        <h2 className="text-xl font-bold">
+          Compare Books
+        </h2>
+
+        <p className="text-sm text-gray-500">
+          Find meaningful relationships
+          between passages from different
+          books.
+        </p>
+      </div>
+
+      {/* ==========================================
+          BOOK SELECTOR
+          ========================================== */}
+      <div className="space-y-3">
+        <label className="block text-sm font-medium">
+          Select a book
+        </label>
+
+        <select
+          value={selectedBookId}
+          onChange={event =>
+            setSelectedBookId(
+              event.target.value,
+            )
+          }
+          disabled={loading}
+          className="w-full rounded border px-3 py-2"
+        >
+          <option value="">
+            Select a book...
+          </option>
+
+          {books.map(book => (
+            <option
+              key={book.id}
+              value={book.id}
+            >
+              {book.title}
+            </option>
+          ))}
+        </select>
+
+        <button
+          type="button"
+          onClick={() =>
+            void compareBooks()
+          }
+          disabled={
+            loading ||
+            !selectedBookId
+          }
+          className="rounded px-4 py-2 font-medium disabled:opacity-50"
+        >
+          {loading
+            ? 'Comparing...'
+            : 'Compare Books'}
+        </button>
+      </div>
+
+      {/* ==========================================
+          STATUS
+          ========================================== */}
+      {status && (
+        <div className="rounded border p-3 text-sm">
+          {status}
+        </div>
+      )}
+
+      {/* ==========================================
+          RESULTS
+          ========================================== */}
+      <div className="space-y-3">
+        {results.map(result => {
+          const relationshipId =
+            `${result.queryChunkId}-${result.matchedChunkId}`
+
+          const expanded =
+            expandedRelationship ===
+            relationshipId
+
+          const analysis =
+            result.analysis
+
+          const bookAParts =
+            getBookTitleParts(
+              result.query.documentTitle,
+            )
+
+          const bookBParts =
+            getBookTitleParts(
+              result.matched.documentTitle,
+            )
+
+          return (
+            <div
+              key={relationshipId}
+              className="overflow-hidden rounded-2xl border shadow-sm"
+            >
+              {/* ==================================
+                  COLLAPSED BUBBLE
+                  ================================== */}
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedRelationship(
+                    expanded
+                      ? null
+                      : relationshipId,
+                  )
+                }
+                className="w-full p-4 text-left transition hover:bg-gray-50"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    {/* Pages */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border px-3 py-1 text-xs">
+                        Page{' '}
+                        {
+                          result.query
+                            .pageNumber
+                        }
+                      </span>
+
+                      <span className="text-gray-400">
+                        ↔
+                      </span>
+
+                      <span className="rounded-full border px-3 py-1 text-xs">
+                        Page{' '}
+                        {
+                          result.matched
+                            .pageNumber
+                        }
+                      </span>
+
+                      <span className="rounded-full border px-3 py-1 text-xs">
+                        {(
+                          result.similarity *
+                          100
+                        ).toFixed(0)}
+                        % semantic
+                      </span>
+                    </div>
+
+                    {/* Books */}
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <div>
+                        <div className="font-semibold">
+                          {bookAParts.title}
+                        </div>
+
+                        {bookAParts.subtitle && (
+                          <div className="text-xs text-gray-500">
+                            {
+                              bookAParts.subtitle
+                            }
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="font-semibold">
+                          {bookBParts.title}
+                        </div>
+
+                        {bookBParts.subtitle && (
+                          <div className="text-xs text-gray-500">
+                            {
+                              bookBParts.subtitle
+                            }
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Relationship */}
+                    <p className="mt-3 line-clamp-2 text-sm text-gray-600">
+                      {analysis.connection ||
+                        analysis.explanation}
+                    </p>
+
+                    {/* Concepts */}
+                    {analysis.sharedConcepts
+                      .length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-1">
+                        {analysis.sharedConcepts
+                          .slice(0, 5)
+                          .map(
+                            concept => (
+                              <span
+                                key={
+                                  concept
+                                }
+                                className="rounded-full border px-2 py-1 text-xs text-gray-600"
+                              >
+                                {
+                                  concept
+                                }
+                              </span>
+                            ),
+                          )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Expand icon */}
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-lg">
+                    {expanded
+                      ? '−'
+                      : '+'}
+                  </div>
+                </div>
+              </button>
+
+              {/* ==================================
+                  EXPANDED BUBBLE
+                  ================================== */}
+              {expanded && (
+                <div className="border-t p-5">
+                  <div className="grid gap-6 md:grid-cols-2">
+                    {/* BOOK A */}
+                    <div className="rounded-xl border p-4">
+                      <div className="mb-3 text-xs font-medium uppercase text-gray-500">
+                        Book A · Page{' '}
+                        {
+                          result.query
+                            .pageNumber
+                        }
+                      </div>
+
+                      <BookTitle
+                        title={
+                          result.query
+                            .documentTitle
+                        }
+                      />
+
+                      <p className="mt-4 text-sm leading-7">
+                        {
+                          result.query
+                            .text
+                        }
+                      </p>
+                    </div>
+
+                    {/* BOOK B */}
+                    <div className="rounded-xl border p-4">
+                      <div className="mb-3 text-xs font-medium uppercase text-gray-500">
+                        Book B · Page{' '}
+                        {
+                          result.matched
+                            .pageNumber
+                        }
+                      </div>
+
+                      <BookTitle
+                        title={
+                          result.matched
+                            .documentTitle
+                        }
+                      />
+
+                      <p className="mt-4 text-sm leading-7">
+                        {
+                          result.matched
+                            .text
+                        }
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* AI ANALYSIS */}
+                  <div className="mt-6 space-y-5 border-t pt-5">
+                    <div>
+                      <strong>
+                        Why They Are Related
+                      </strong>
+
+                      <p className="mt-1 text-sm leading-6">
+                        {
+                          analysis.explanation
+                        }
+                      </p>
+                    </div>
+
+                    <div>
+                      <strong>
+                        Connection
+                      </strong>
+
+                      <p className="mt-1 text-sm leading-6">
+                        {
+                          analysis.connection
+                        }
+                      </p>
+                    </div>
+
+                    <div>
+                      <strong>
+                        Book A Contribution
+                      </strong>
+
+                      <p className="mt-1 text-sm leading-6">
+                        {
+                          analysis.bookAContribution
+                        }
+                      </p>
+                    </div>
+
+                    <div>
+                      <strong>
+                        Book B Contribution
+                      </strong>
+
+                      <p className="mt-1 text-sm leading-6">
+                        {
+                          analysis.bookBContribution
+                        }
+                      </p>
+                    </div>
+
+                    <div>
+                      <strong>
+                        Important Difference
+                      </strong>
+
+                      <p className="mt-1 text-sm leading-6">
+                        {
+                          analysis.importantDifference
+                        }
+                      </p>
+                    </div>
+
+                    <div>
+                      <strong>
+                        Why It Matters
+                      </strong>
+
+                      <p className="mt-1 text-sm leading-6">
+                        {
+                          analysis.whyItMatters
+                        }
+                      </p>
+                    </div>
+
+                    {analysis.sharedConcepts
+                      .length > 0 && (
+                      <div>
+                        <strong>
+                          Shared Concepts
+                        </strong>
+
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {analysis.sharedConcepts.map(
+                            concept => (
+                              <span
+                                key={
+                                  concept
+                                }
+                                className="rounded-full border px-3 py-1 text-xs"
+                              >
+                                {
+                                  concept
+                                }
+                              </span>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="text-xs text-gray-500">
+                      Semantic similarity:{' '}
+                      {(
+                        result.similarity *
+                        100
+                      ).toFixed(1)}
+                      %
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* ==========================================
+          EMPTY STATE
+          ========================================== */}
+      {!loading &&
+        results.length === 0 &&
+        status.startsWith(
+          'Finished',
+        ) && (
+          <div className="rounded-xl border p-6 text-center text-sm text-gray-500">
+            No meaningful relationships
+            were found.
+          </div>
+        )}
+    </div>
+  )
+}
+

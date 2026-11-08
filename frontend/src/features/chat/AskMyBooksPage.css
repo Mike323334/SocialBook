@@ -1,0 +1,429 @@
+/* =========================================================
+   ASK MY BOOKS — MAIN LAYOUT
+========================================================= */
+
+.ask-books-page {
+  --ask-primary: #6366f1;
+  --ask-primary-hover: #4f46e5;
+  --ask-text: #1e293b;
+  --ask-muted: #64748b;
+  --ask-border: #e2e8f0;
+  --ask-surface: #ffffff;
+  --ask-background: #f8fafc;
+
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px;
+  color: var(--ask-text);
+  box-sizing: border-box;
+}
+
+.ask-books-page *,
+.ask-books-page *::before,
+.ask-books-page *::after {
+  box-sizing: border-box;
+}
+
+/* =========================================================
+   HEADER
+========================================================= */
+
+.ask-books-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 32px;
+  margin-bottom: 32px;
+  border: 1px solid var(--ask-border);
+  border-radius: 20px;
+  background: linear-gradient(135deg, #ffffff 0%, #eef2ff 100%);
+}
+
+.ask-books-header h1 {
+  margin: 8px 0 12px;
+  font-size: clamp(28px, 4vw, 38px);
+  font-weight: 750;
+  letter-spacing: -1.2px;
+  color: #172554;
+}
+
+.ask-books-header p:not(.eyebrow) {
+  max-width: 620px;
+  margin: 0;
+  color: var(--ask-muted);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.ask-books-header .eyebrow {
+  margin: 0;
+  color: var(--ask-primary);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.ask-books-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 68px;
+  height: 68px;
+  color: var(--ask-primary);
+  background: #e0e7ff;
+  border-radius: 18px;
+}
+
+/* =========================================================
+   BOOK SELECTOR
+========================================================= */
+
+.ask-books-selector {
+  padding: 28px;
+  margin-bottom: 32px;
+  background: var(--ask-surface);
+  border: 1px solid var(--ask-border);
+  border-radius: 20px;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.035);
+}
+
+.ask-books-selector-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.ask-books-selector-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  color: var(--ask-primary);
+  background: #eef2ff;
+  border-radius: 12px;
+}
+
+.ask-books-selector-heading h2 {
+  margin: 0 0 5px;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.ask-books-selector-heading p {
+  margin: 0;
+  color: var(--ask-muted);
+  font-size: 13px;
+}
+
+/* =========================================================
+   BOOK GRID
+========================================================= */
+
+.ask-books-book-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.ask-books-book-option {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  width: 100%;
+  min-width: 0;
+  min-height: 100px;
+  padding: 18px;
+  text-align: left;
+  color: var(--ask-text);
+  background: #ffffff;
+  border: 1px solid var(--ask-border);
+  border-radius: 14px;
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.ask-books-book-option:hover {
+  border-color: #a5b4fc;
+  background: #fafaff;
+  box-shadow: 0 5px 15px rgba(99, 102, 241, 0.08);
+  transform: translateY(-2px);
+}
+
+.ask-books-book-option:focus-visible {
+  outline: 3px solid rgba(99, 102, 241, 0.3);
+  outline-offset: 3px;
+}
+
+.ask-books-book-option > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--ask-primary);
+}
+
+.ask-books-book-option.selected {
+  border: 2px solid var(--ask-primary);
+  background: #eef2ff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08);
+}
+
+.ask-books-book-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ask-books-book-info strong {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: #1e293b;
+}
+
+.ask-books-book-info small {
+  overflow-wrap: anywhere;
+  color: var(--ask-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ask-books-selected-label {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 4px 8px;
+  color: #4338ca;
+  background: #e0e7ff;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+/* =========================================================
+   EMPTY LIBRARY
+========================================================= */
+
+.ask-books-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 50px 20px;
+  text-align: center;
+  background: var(--ask-background);
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+}
+
+.ask-books-empty > svg {
+  margin-bottom: 16px;
+  color: var(--ask-primary);
+}
+
+.ask-books-empty h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.ask-books-empty p {
+  max-width: 400px;
+  margin: 0 0 20px;
+  color: var(--ask-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* =========================================================
+   BUTTONS
+========================================================= */
+
+.ask-books-page .primary-button,
+.ask-books-page .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+
+.ask-books-page .primary-button {
+  color: #ffffff;
+  background: var(--ask-primary);
+  border: 1px solid var(--ask-primary);
+}
+
+.ask-books-page .primary-button:hover {
+  background: var(--ask-primary-hover);
+  border-color: var(--ask-primary-hover);
+}
+
+.ask-books-page .secondary-button {
+  color: #475569;
+  background: #ffffff;
+  border: 1px solid var(--ask-border);
+}
+
+.ask-books-page .secondary-button:hover {
+  color: var(--ask-primary);
+  border-color: #a5b4fc;
+  background: #eef2ff;
+}
+
+/* =========================================================
+   CHAT SECTION
+========================================================= */
+
+.ask-books-chat-section {
+  overflow: hidden;
+  background: var(--ask-surface);
+  border: 1px solid var(--ask-border);
+  border-radius: 20px;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.035);
+}
+
+.ask-books-chat-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--ask-border);
+}
+
+.ask-books-chat-heading span {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--ask-muted);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.ask-books-chat-heading h2 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 20px;
+  font-weight: 750;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* =========================================================
+   EMPTY CHAT PLACEHOLDER
+========================================================= */
+
+.ask-books-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 55px 24px;
+  text-align: center;
+  background: #ffffff;
+  border: 1px dashed var(--ask-border);
+  border-radius: 18px;
+}
+
+.ask-books-placeholder > svg {
+  margin-bottom: 18px;
+  color: var(--ask-primary);
+}
+
+.ask-books-placeholder h3 {
+  margin: 0 0 10px;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.ask-books-placeholder p {
+  max-width: 460px;
+  margin: 0;
+  color: var(--ask-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* =========================================================
+   RESPONSIVE DESIGN
+========================================================= */
+
+@media (max-width: 768px) {
+  .ask-books-page {
+    padding: 18px;
+  }
+
+  .ask-books-header {
+    padding: 24px;
+  }
+
+  .ask-books-selector {
+    padding: 20px;
+  }
+
+  .ask-books-book-list {
+    grid-template-columns: 1fr;
+  }
+
+  .ask-books-chat-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 20px;
+  }
+
+  .ask-books-chat-heading .secondary-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .ask-books-page {
+    padding: 12px;
+  }
+
+  .ask-books-header {
+    padding: 20px;
+  }
+
+  .ask-books-header-icon {
+    width: 48px;
+    height: 48px;
+  }
+
+  .ask-books-header-icon svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .ask-books-header h1 {
+    font-size: 27px;
+  }
+
+  .ask-books-selector {
+    padding: 16px;
+  }
+
+  .ask-books-book-option {
+    padding: 15px;
+  }
+}

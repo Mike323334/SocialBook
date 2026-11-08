@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+﻿import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
+
 import { useLiveQuery } from 'dexie-react-hooks'
+
 import {
   BookOpen,
   Globe,
@@ -9,14 +16,18 @@ import {
   Users,
 } from 'lucide-react'
 
-import { database } from '../../db/database'
-
 import {
-  ACCOUNT_CHANGED_EVENT,
-  API_URL,
-  getCurrentAccount,
-  type Account,
-} from '../account/accountApi'
+  getActiveDatabase,
+  isActiveDatabase,
+} from '../../db/database'
+
+import type { Account } from '../account/accountApi'
+
+import { API_URL } from '../account/accountApi'
+
+interface NotesPageProps {
+  account: Account | null
+}
 
 interface CommunityNote {
   id: string
@@ -65,11 +76,12 @@ async function getErrorMessage(
 
 /**
  * Detect chapter headings in extracted PDF text.
- *
- * This is a fallback for PDFs without usable bookmarks.
  */
 function detectChaptersFromPages(
-  pages: Array<{ pageNumber: number; text: string }>,
+  pages: Array<{
+    pageNumber: number
+    text: string
+  }>,
 ): ChapterOption[] {
   const found: ChapterOption[] = []
   const seen = new Set<string>()
@@ -101,7 +113,6 @@ function detectChaptersFromPages(
         })
       }
 
-      // Prevent a pathological zero-length regex loop.
       if (chapterPattern.lastIndex === match.index) {
         chapterPattern.lastIndex++
       }
@@ -111,7 +122,16 @@ function detectChaptersFromPages(
   return found
 }
 
-export function NotesPage() {
+export function NotesPage({
+  account,
+}: NotesPageProps) {
+  // Capture the database belonging to the mounted account.
+  const db = getActiveDatabase()
+
+  const mountedRef = useRef(true)
+
+  const communityRequestRef = useRef(0)
+
   const [isCreating, setIsCreating] = useState(false)
 
   const [selectedBookId, setSelectedBookId] = useState('')
@@ -126,9 +146,6 @@ export function NotesPage() {
 
   const [content, setContent] = useState('')
 
-  const [account, setAccount] = useState<Account | null>(null)
-  const [accountLoading, setAccountLoading] = useState(true)
-
   const [communityNotes, setCommunityNotes] = useState<
     CommunityNote[]
   >([])
@@ -137,68 +154,67 @@ export function NotesPage() {
     useState(false)
 
   const [saving, setSaving] = useState(false)
+
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
+  useEffect(() => {
+    mountedRef.current = true
+
+    return () => {
+      mountedRef.current = false
+      communityRequestRef.current++
+    }
+  }, [])
+
   /*
-   * Load books and notes from IndexedDB.
-   *
-   * useLiveQuery keeps the component updated when the
-   * corresponding Dexie tables change.
+   * All private queries use the captured account database.
    */
   const books = useLiveQuery(
-    () => database.documents.orderBy('title').toArray(),
+    () => db.documents.orderBy('title').toArray(),
+    [db],
     [],
   )
 
   const notes = useLiveQuery(
     () =>
-      database.notes
+      db.notes
         .orderBy('updatedAt')
         .reverse()
         .toArray(),
+    [db],
     [],
   )
 
-  /*
-   * The queries can initially return undefined.
-   * These fallback arrays make rendering and array
-   * operations safe while IndexedDB loads.
-   */
   const bookList = books ?? []
   const noteList = notes ?? []
 
   const selectedBook = bookList.find(
-    book => book.id === selectedBookId,
+    (book) => book.id === selectedBookId,
   )
 
   /*
-   * Load the selected book's pages.
+   * Load pages from the same database as the selected book.
    */
-const selectedBookPages =
+ const selectedBookPages =
   useLiveQuery(
     () =>
       selectedBookId
-        ? database.pages
+        ? db.pages
             .where('documentId')
             .equals(selectedBookId)
             .sortBy('pageNumber')
-        : database.pages
-            .toCollection()
-            .limit(0)
-            .toArray(),
-    [selectedBookId],
-  ) ?? []
+        : Promise.resolve([] as import('../../db/database').PageRecord[]),
+    [db, selectedBookId],
+    [],
+  )
 
   /*
-   * Prefer the PDF's stored outline when it contains
-   * chapters with page numbers.
-   *
-   * Otherwise, detect chapter headings from extracted text.
+   * Prefer the stored PDF outline.
    */
   const bookmarkedChapters =
     selectedBook?.outline?.filter(
-      chapter => chapter.pageNumber !== null,
+      (chapter) => chapter.pageNumber !== null,
     ) ?? []
 
   const detectedChapters =
@@ -211,9 +227,6 @@ const selectedBookPages =
 
   /*
    * Resolve the selected chapter.
-   *
-   * The manual option allows the reader to enter a chapter
-   * even when automatic chapter detection succeeds.
    */
   const selectedChapter =
     selectedChapterIndex === 'manual'
@@ -232,130 +245,117 @@ const selectedBookPages =
         : undefined
 
   /*
-   * Load community notes for the signed-in account.
+   * Load community notes from the backend.
+   *
+   * Community posts are intentionally shared between accounts.
+   * They are not stored in the private IndexedDB database.
    */
-  const loadCommunityNotes = useCallback(async () => {
-    if (accountLoading) {
+  /*
+ * Load public community notes.
+ *
+ * Visitors can read community notes without signing in.
+ * Authentication is optional and only identifies note ownership.
+ */
+const loadCommunityNotes = useCallback(async () => {
+  const requestId = ++communityRequestRef.current
+
+  setCommunityLoading(true)
+
+  try {
+    const response = await fetch(
+      `${API_URL}/publications/community`,
+      {
+        method: 'GET',
+        credentials: 'include',
+      },
+    )
+
+    if (
+      !mountedRef.current ||
+      requestId !== communityRequestRef.current
+    ) {
       return
     }
 
-    if (!account) {
-      setCommunityNotes([])
-      setCommunityLoading(false)
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response))
+    }
+
+    const result =
+      (await response.json()) as CommunityNote[]
+
+    if (
+      !mountedRef.current ||
+      requestId !== communityRequestRef.current
+    ) {
       return
     }
 
-    setCommunityLoading(true)
-
-    try {
-      const response = await fetch(
-        `${API_URL}/publications/community`,
-        {
-          method: 'GET',
-          credentials: 'include',
-        },
-      )
-
-      if (!response.ok) {
-        throw new Error(await getErrorMessage(response))
-      }
-
-      const result =
-        (await response.json()) as CommunityNote[]
-
-      setCommunityNotes(result)
-      setError('')
-    } catch (err) {
+    setCommunityNotes(result)
+    setError('')
+  } catch (err) {
+    if (
+      mountedRef.current &&
+      requestId === communityRequestRef.current
+    ) {
       setError(
         err instanceof Error
           ? err.message
           : 'Could not load community notes.',
       )
-    } finally {
+    }
+  } finally {
+    if (
+      mountedRef.current &&
+      requestId === communityRequestRef.current
+    ) {
       setCommunityLoading(false)
     }
-  }, [account, accountLoading])
-
+  }
+}, [])
   /*
-   * Load the current account and listen for authentication
-   * changes elsewhere in the application.
+   * Reset temporary form state when the account changes.
    */
   useEffect(() => {
-    let active = true
-    let accountChangedDuringLoad = false
+    setIsCreating(false)
+    setSelectedBookId('')
+    setSelectedChapterIndex('')
+    setManualChapterTitle('')
+    setManualChapterPage('1')
+    setContent('')
+    setError('')
+    setMessage('')
+  }, [account?.id, db])
 
-    async function loadAccount() {
-      try {
-        const result = await getCurrentAccount()
+  /*
+   * Load shared community content when the account changes.
+   */
+   useEffect(() => {
+  void loadCommunityNotes()
+}, [loadCommunityNotes, account?.id])
 
-        if (active && !accountChangedDuringLoad) {
-          setAccount(result)
-        }
-      } catch (err) {
-        if (active && !accountChangedDuringLoad) {
-          setAccount(null)
+  /*
+   * Create a private note in the captured database.
+   */
+  async function createNote() {
+    const operationDatabase = db
 
-          console.error(
-            'Could not load the current account:',
-            err,
-          )
-        }
-      } finally {
-        if (active) {
-          setAccountLoading(false)
-        }
-      }
-    }
+    const text = content.trim()
 
-    function handleAccountChanged(event: Event) {
-      const customEvent =
-        event as CustomEvent<Account | null>
-
-      accountChangedDuringLoad = true
-
-      setAccount(customEvent.detail)
-      setAccountLoading(false)
-      setError('')
-      setMessage('')
-    }
-
-    window.addEventListener(
-      ACCOUNT_CHANGED_EVENT,
-      handleAccountChanged,
-    )
-
-    void loadAccount()
-
-    return () => {
-      active = false
-
-      window.removeEventListener(
-        ACCOUNT_CHANGED_EVENT,
-        handleAccountChanged,
+    if (
+      !selectedBookId ||
+      !selectedChapter ||
+      !text
+    ) {
+      setError(
+        'Select a book, select a chapter, and write a note.',
       )
-    }
-  }, [])
-
-  /*
-   * Load community notes after the account check completes.
-   */
-  useEffect(() => {
-    if (accountLoading) {
       return
     }
 
-    void loadCommunityNotes()
-  }, [account, accountLoading, loadCommunityNotes])
-
-  /*
-   * Create a new private note in IndexedDB.
-   */
-  async function createNote() {
-    const text = content.trim()
-
-    if (!selectedBookId || !selectedChapter || !text) {
+    if (!isActiveDatabase(operationDatabase)) {
       setError(
-        'Select a book, select a chapter, and write a note.',
+        'Your account session is changing. Please try again.',
       )
       return
     }
@@ -365,9 +365,13 @@ const selectedBookPages =
     setSaving(true)
 
     try {
-      const book = await database.documents.get(
+      const book = await operationDatabase.documents.get(
         selectedBookId,
       )
+
+      if (!isActiveDatabase(operationDatabase)) {
+        return
+      }
 
       if (!book) {
         setError('The selected book could not be found.')
@@ -376,7 +380,7 @@ const selectedBookPages =
 
       const now = new Date()
 
-      await database.notes.add({
+      await operationDatabase.notes.add({
         id: crypto.randomUUID(),
         documentId: book.id,
         bookTitle: book.title,
@@ -389,6 +393,10 @@ const selectedBookPages =
         isPublished: false,
       })
 
+      if (!isActiveDatabase(operationDatabase)) {
+        return
+      }
+
       setContent('')
       setSelectedBookId('')
       setSelectedChapterIndex('')
@@ -400,10 +408,20 @@ const selectedBookPages =
         `Your note about "${selectedChapter.title}" was saved privately.`,
       )
     } catch (err) {
-      console.error('Could not save the note:', err)
-      setError('Could not save your note.')
+      if (
+        mountedRef.current &&
+        isActiveDatabase(operationDatabase)
+      ) {
+        console.error('Could not save the note:', err)
+        setError('Could not save your note.')
+      }
     } finally {
-      setSaving(false)
+      if (
+        mountedRef.current &&
+        isActiveDatabase(operationDatabase)
+      ) {
+        setSaving(false)
+      }
     }
   }
 
@@ -414,15 +432,14 @@ const selectedBookPages =
     noteId: string,
     published: boolean,
   ) {
-    setError('')
-    setMessage('')
+    const operationDatabase = db
 
-    if (accountLoading) {
-      setError(
-        'Please wait while we check your sign-in session.',
-      )
+    if (!isActiveDatabase(operationDatabase)) {
       return
     }
+
+    setError('')
+    setMessage('')
 
     if (!account) {
       setError('Please sign in before publishing a note.')
@@ -437,7 +454,11 @@ const selectedBookPages =
     setSaving(true)
 
     try {
-      const note = await database.notes.get(noteId)
+      const note = await operationDatabase.notes.get(noteId)
+
+      if (!isActiveDatabase(operationDatabase)) {
+        return
+      }
 
       if (!note) {
         throw new Error('The note could not be found.')
@@ -445,17 +466,21 @@ const selectedBookPages =
 
       if (published) {
         /*
-         * Gather the selected book's extracted text
-         * for the backend copyright check.
+         * Gather extracted PDF text for the backend
+         * copyright check.
          */
-        const pages = await database.pages
+        const pages = await operationDatabase.pages
           .where('documentId')
           .equals(note.documentId)
           .toArray()
 
+        if (!isActiveDatabase(operationDatabase)) {
+          return
+        }
+
         const sourceText = pages
           .sort((a, b) => a.pageNumber - b.pageNumber)
-          .map(page => page.text.trim())
+          .map((page) => page.text.trim())
           .filter(Boolean)
           .join('\n\n')
 
@@ -482,6 +507,10 @@ const selectedBookPages =
           },
         )
 
+        if (!isActiveDatabase(operationDatabase)) {
+          return
+        }
+
         if (!response.ok) {
           throw new Error(await getErrorMessage(response))
         }
@@ -489,11 +518,19 @@ const selectedBookPages =
         const publishedNote =
           (await response.json()) as CommunityNote
 
-        await database.notes.update(noteId, {
+        if (!isActiveDatabase(operationDatabase)) {
+          return
+        }
+
+        await operationDatabase.notes.update(noteId, {
           isPublished: true,
           authorName: publishedNote.nickname,
           updatedAt: new Date(),
         })
+
+        if (!isActiveDatabase(operationDatabase)) {
+          return
+        }
 
         setMessage(
           'Your note was published to the community.',
@@ -504,7 +541,7 @@ const selectedBookPages =
          * by the current user.
          */
         const communityNote = communityNotes.find(
-          item =>
+          (item) =>
             item.is_owner &&
             item.book_title === note.bookTitle &&
             item.content === note.content,
@@ -531,41 +568,69 @@ const selectedBookPages =
           },
         )
 
+        if (!isActiveDatabase(operationDatabase)) {
+          return
+        }
+
         if (!response.ok) {
           throw new Error(await getErrorMessage(response))
         }
 
-        await database.notes.update(noteId, {
+        await operationDatabase.notes.update(noteId, {
           isPublished: false,
           updatedAt: new Date(),
         })
+
+        if (!isActiveDatabase(operationDatabase)) {
+          return
+        }
 
         setMessage('Your note is now private.')
       }
 
       await loadCommunityNotes()
     } catch (err) {
-      console.error('Could not update the note:', err)
+      if (
+        mountedRef.current &&
+        isActiveDatabase(operationDatabase)
+      ) {
+        console.error('Could not update the note:', err)
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Could not update the note.',
-      )
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Could not update the note.',
+        )
+      }
     } finally {
-      setSaving(false)
+      if (
+        mountedRef.current &&
+        isActiveDatabase(operationDatabase)
+      ) {
+        setSaving(false)
+      }
     }
   }
 
   /*
-   * Delete a private note from IndexedDB.
+   * Delete a private note from this account's database.
    */
   async function deleteNote(noteId: string) {
+    const operationDatabase = db
+
+    if (!isActiveDatabase(operationDatabase)) {
+      return
+    }
+
     setError('')
     setMessage('')
 
     try {
-      const note = await database.notes.get(noteId)
+      const note = await operationDatabase.notes.get(noteId)
+
+      if (!isActiveDatabase(operationDatabase)) {
+        return
+      }
 
       if (!note) {
         setError('The note could not be found.')
@@ -579,12 +644,21 @@ const selectedBookPages =
         return
       }
 
-      await database.notes.delete(noteId)
+      await operationDatabase.notes.delete(noteId)
+
+      if (!isActiveDatabase(operationDatabase)) {
+        return
+      }
 
       setMessage('Your note was deleted.')
     } catch (err) {
-      console.error('Could not delete the note:', err)
-      setError('Could not delete your note.')
+      if (
+        mountedRef.current &&
+        isActiveDatabase(operationDatabase)
+      ) {
+        console.error('Could not delete the note:', err)
+        setError('Could not delete your note.')
+      }
     }
   }
 
@@ -594,7 +668,12 @@ const selectedBookPages =
   async function deleteCommunityNote(
     communityNote: CommunityNote,
   ) {
-    if (!communityNote.is_owner) {
+    const operationDatabase = db
+
+    if (
+      !communityNote.is_owner ||
+      !isActiveDatabase(operationDatabase)
+    ) {
       return
     }
 
@@ -610,42 +689,59 @@ const selectedBookPages =
         },
       )
 
+      if (!isActiveDatabase(operationDatabase)) {
+        return
+      }
+
       if (!response.ok) {
         throw new Error(await getErrorMessage(response))
       }
 
       const matchingNotes = noteList.filter(
-        note =>
+        (note) =>
           note.isPublished &&
           note.bookTitle === communityNote.book_title &&
           note.content === communityNote.content,
       )
 
       for (const note of matchingNotes) {
-        await database.notes.update(note.id, {
+        if (!isActiveDatabase(operationDatabase)) {
+          return
+        }
+
+        await operationDatabase.notes.update(note.id, {
           isPublished: false,
           updatedAt: new Date(),
         })
       }
 
-      setCommunityNotes(current =>
+      if (!isActiveDatabase(operationDatabase)) {
+        return
+      }
+
+      setCommunityNotes((current) =>
         current.filter(
-          note => note.id !== communityNote.id,
+          (note) => note.id !== communityNote.id,
         ),
       )
 
       setMessage('Your community note was deleted.')
     } catch (err) {
-      console.error(
-        'Could not delete the community note:',
-        err,
-      )
+      if (
+        mountedRef.current &&
+        isActiveDatabase(operationDatabase)
+      ) {
+        console.error(
+          'Could not delete the community note:',
+          err,
+        )
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Could not delete the community note.',
-      )
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Could not delete the community note.',
+        )
+      }
     }
   }
 
@@ -713,7 +809,7 @@ const selectedBookPages =
 
               <select
                 value={selectedBookId}
-                onChange={event => {
+                onChange={(event) => {
                   setSelectedBookId(event.target.value)
                   setSelectedChapterIndex('')
                   setManualChapterTitle('')
@@ -725,8 +821,11 @@ const selectedBookPages =
               >
                 <option value="">Select a book</option>
 
-                {bookList.map(book => (
-                  <option key={book.id} value={book.id}>
+                {bookList.map((book) => (
+                  <option
+                    key={book.id}
+                    value={book.id}
+                  >
                     {book.title}
                   </option>
                 ))}
@@ -739,7 +838,7 @@ const selectedBookPages =
 
                 <select
                   value={selectedChapterIndex}
-                  onChange={event => {
+                  onChange={(event) => {
                     setSelectedChapterIndex(
                       event.target.value,
                     )
@@ -762,7 +861,7 @@ const selectedBookPages =
                       key={`${chapter.title}-${index}`}
                       value={index}
                     >
-                      {chapter.title} — page{' '}
+                      {chapter.title}{' \u2014 page '}
                       {chapter.pageNumber ?? 'unknown'}
                     </option>
                   ))}
@@ -783,12 +882,12 @@ const selectedBookPages =
                     <input
                       type="text"
                       value={manualChapterTitle}
-                      onChange={event =>
+                      onChange={(event) =>
                         setManualChapterTitle(
                           event.target.value,
                         )
                       }
-                      placeholder="e.g. Chapter 1 — Introduction"
+                      placeholder="e.g. Chapter 1 â€” Introduction"
                       required
                     />
                   </label>
@@ -803,7 +902,7 @@ const selectedBookPages =
                         selectedBook?.pageCount ?? undefined
                       }
                       value={manualChapterPage}
-                      onChange={event =>
+                      onChange={(event) =>
                         setManualChapterPage(
                           event.target.value,
                         )
@@ -818,7 +917,7 @@ const selectedBookPages =
                 chapters.length === 0 && (
                   <small>
                     The app checks PDF bookmarks and extracted
-                    text for headings such as “Chapter 1”.
+                    text for headings such as â€œChapter 1â€.
                     If it cannot find any, enter the chapter
                     title and its starting page manually.
                   </small>
@@ -830,7 +929,7 @@ const selectedBookPages =
 
               <textarea
                 value={content}
-                onChange={event =>
+                onChange={(event) =>
                   setContent(event.target.value)
                 }
                 placeholder="What did you think about this book?"
@@ -917,7 +1016,7 @@ const selectedBookPages =
               </div>
             ) : (
               <div className="notes-list">
-                {noteList.map(note => (
+                {noteList.map((note) => (
                   <article
                     key={note.id}
                     className="note-card"
@@ -939,7 +1038,7 @@ const selectedBookPages =
                         {note.chapterPageNumber != null && (
                           <>
                             {' '}
-                            · Page {note.chapterPageNumber}
+                            Â· Page {note.chapterPageNumber}
                           </>
                         )}
                       </p>
@@ -979,11 +1078,7 @@ const selectedBookPages =
                       <div className="note-actions">
                         <button
                           type="button"
-                          disabled={
-                            saving ||
-                            accountLoading ||
-                            !account
-                          }
+                          disabled={saving || !account}
                           onClick={() =>
                             void togglePublished(
                               note.id,
@@ -1038,23 +1133,12 @@ const selectedBookPages =
                 onClick={() =>
                   void loadCommunityNotes()
                 }
-                disabled={
-                  communityLoading ||
-                  accountLoading ||
-                  !account
-                }
+                disabled={communityLoading}
               >
                 Refresh
               </button>
             </div>
-
-            {accountLoading ? (
-              <p>Checking your sign-in session...</p>
-            ) : !account ? (
-              <p>
-                Sign in to see notes shared by other readers.
-              </p>
-            ) : communityLoading ? (
+          {communityLoading ? (
               <p>Loading community notes...</p>
             ) : communityNotes.length === 0 ? (
               <div className="notes-empty">
@@ -1074,7 +1158,7 @@ const selectedBookPages =
               </div>
             ) : (
               <div className="notes-list">
-                {communityNotes.map(note => (
+                {communityNotes.map((note) => (
                   <article
                     key={note.id}
                     className="note-card"
@@ -1106,12 +1190,11 @@ const selectedBookPages =
                             disabled={saving}
                             onClick={() => {
                               const localNote = noteList.find(
-                                item =>
+                                (item) =>
                                   item.isPublished &&
                                   item.bookTitle ===
                                     note.book_title &&
-                                  item.content ===
-                                    note.content,
+                                  item.content === note.content,
                               )
 
                               if (localNote) {
@@ -1154,4 +1237,3 @@ const selectedBookPages =
     </section>
   )
 }
-

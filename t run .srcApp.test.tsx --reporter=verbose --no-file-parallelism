@@ -1,0 +1,493 @@
+[1mdiff --git a/frontend/src/App.tsx b/frontend/src/App.tsx[m
+[1mindex 0266344..ce2bc95 100644[m
+[1m--- a/frontend/src/App.tsx[m
+[1m+++ b/frontend/src/App.tsx[m
+[36m@@ -1,442 +1,47 @@[m
+[31m-import { useEffect, useState } from 'react'[m
+[31m-import {[m
+[31m-  NavLink,[m
+[31m-  Route,[m
+[31m-  Routes,[m
+[31m-  useLocation,[m
+[31m-} from 'react-router-dom'[m
+[31m-import { useLiveQuery } from 'dexie-react-hooks'[m
+[31m-[m
+[31m-import {[m
+[31m-  BookOpen,[m
+[31m-  Bookmark,[m
+[31m-  BrainCircuit,[m
+[31m-  Clock3,[m
+[31m-  Compass,[m
+[31m-  Library,[m
+[31m-  LockKeyhole,[m
+[31m-  LogOut,[m
+[31m-  UserRound,[m
+[31m-} from 'lucide-react'[m
+[31m-[m
+[31m-import EmbeddingTest from './features/memory/EmbeddingTest'[m
+[31m-import './App.css'[m
+[31m-[m
+[31m-import {[m
+[31m-  LibraryPage,[m
+[31m-  ReaderPage,[m
+[31m-} from './features/books/LibraryPage'[m
+[31m-[m
+[31m-import { database } from './db/database'[m
+[31m-import { trackAnalyticsEvent } from './features/analytics/analyticsClient'[m
+[31m-[m
+[31m-import { AccountPage } from './features/account/AccountPage'[m
+[31m-[m
+[31m-import {[m
+[31m-  ACCOUNT_CHANGED_EVENT,[m
+[31m-  getCurrentAccount,[m
+[31m-  logoutAccount,[m
+[31m-  notifyAccountChanged,[m
+[31m-  type Account,[m
+[31m-} from './features/account/accountApi'[m
+[31m-[m
+[31m-import { ReadingMemoryPage } from './features/memory/ReadingMemoryPage'[m
+[31m-import { NotesPage } from './features/notes/NotesPage'[m
+[31m-[m
+[31m-const navigation = [[m
+[31m-  { label: 'Overview', to: '/', icon: Compass },[m
+[31m-  { label: 'Library', to: '/library', icon: Library },[m
+[31m-  { label: 'My memory', to: '/memory', icon: BrainCircuit },[m
+[31m-  { label: 'Notes', to: '/notes', icon: Bookmark },[m
+[31m-  { label: 'Account', to: '/account', icon: UserRound },[m
+[31m-][m
+[31m-[m
+[31m-const pageCopy: Record<[m
+[31m-  string,[m
+[31m-  { title: string; description: string }[m
+[31m-> = {[m
+[31m-  '/library': {[m
+[31m-    title: 'Your library',[m
+[31m-    description:[m
+[31m-      'Books you add will be organized here and stored on this device.',[m
+[31m-  },[m
+[31m-  '/memory': {[m
+[31m-    title: 'Your reading memory',[m
+[31m-    description:[m
+[31m-      'Questions, notes, and connections will build your personal reading history.',[m
+[31m-  },[m
+[31m-  '/notes': {[m
+[31m-    title: 'Your notes',[m
+[31m-    description:[m
+[31m-      'Notes and highlights will stay in your local library.',[m
+[31m-  },[m
+[31m-}[m
+[31m-[m
+[31m-function Overview() {[m
+[31m-  const bookCount = useLiveQuery([m
+[31m-    () => database.documents.count(),[m
+[31m-    [],[m
+[31m-    0,[m
+[31m-  )[m
+[31m-[m
+[31m-  return ([m
+[31m-    <>[m
+[31m-      <section[m
+[31m-        className="welcome"[m
+[31m-        aria-labelledby="welcome-title"[m
+[31m-      >[m
+[31m-        <div className="welcome-copy">[m
+[31m-          <p className="eyebrow">[m
+[31m-            A quieter place for ideas[m
+[31m-          </p>[m
+[31m-[m
+[31m-          <h1 id="welcome-title">[m
+[31m-            Your reading,[m
+[31m-            <br />[m
+[31m-            remembered.[m
+[31m-          </h1>[m
+[31m-[m
+[31m-          <p className="welcome-description">[m
+[31m-            Build a library of what you read, what you notice,[m
+[31m-            and the ideas that stay with you.[m
+[31m-          </p>[m
+[31m-[m
+[31m-          <NavLink[m
+[31m-            className="welcome-action"[m
+[31m-            to="/library"[m
+[31m-          >[m
+[31m-            {bookCount > 0[m
+[31m-              ? 'Open your library'[m
+[31m-              : 'Add your first book'}[m
+[31m-[m
+[31m-            <span aria-hidden="true">→</span>[m
+[31m-          </NavLink>[m
+[31m-        </div>[m
+[31m-[m
+[31m-        <div[m
+[31m-          className="welcome-mark"[m
+[31m-          aria-hidden="true"[m
+[31m-        >[m
+[31m-          <BookOpen size={70} strokeWidth={1.15} />[m
+[31m-          <span>01</span>[m
+[31m-        </div>[m
+[31m-      </section>[m
+[31m-[m
+[31m-      <section[m
+[31m-        className="library-state"[m
+[31m-        aria-labelledby="library-state-title"[m
+[31m-      >[m
+[31m-        <div className="section-heading">[m
+[31m-          <div>[m
+[31m-            <p className="eyebrow">[m
+[31m-              Your collection[m
+[31m-            </p>[m
+[31m-[m
+[31m-            <h2 id="library-state-title">[m
+[31m-              A fresh page[m
+[31m-            </h2>[m
+[31m-          </div>[m
+[31m-[m
+[31m-          <span className="item-count">[m
+[31m-            {bookCount}{' '}[m
+[31m-            {bookCount === 1 ? 'book' : 'books'}[m
+[31m-          </span>[m
+[31m-        </div>[m
+[31m-[m
+[31m-        <div className="empty-library">[m
+[31m-          <div className="empty-icon">[m
+[31m-            <Library[m
+[31m-              size={21}[m
+[31m-              strokeWidth={1.7}[m
+[31m-            />[m
+[31m-          </div>[m
+[31m-[m
+[31m-          <div>[m
+[31m-            <h3>Your library is ready</h3>[m
+[31m-[m
+[31m-            <p>[m
+[31m-              {bookCount > 0[m
+[31m-                ? 'Your books are ready in the library.'[m
+[31m-                : 'Add a PDF to read it and ask questions about its contents.'}[m
+[31m-            </p>[m
+[31m-          </div>[m
+[31m-        </div>[m
+[31m-      </section>[m
+[31m-[m
+[31m-      <aside className="privacy-note">[m
+[31m-        <span className="privacy-icon">[m
+[31m-          <LockKeyhole size={17} />[m
+[31m-        </span>[m
+[31m-[m
+[31m-        <p>[m
+[31m-          <strong>Local by default.</strong> PDFs and extracted[m
+[31m-          pages stay in this browser. When you ask a question,[m
+[31m-          only selected passages are sent to your configured[m
+[31m-          AI provider.[m
+[31m-        </p>[m
+[31m-      </aside>[m
+[31m-    </>[m
+[31m-  )[m
+[31m-}[m
+[31m-[m
+[31m-function RoutedPage() {[m
+[31m-  const { pathname } = useLocation()[m
+[31m-[m
+[31m-  const page = pageCopy[pathname][m
+[31m-[m
+[31m-  if (!page) {[m
+[31m-    return ([m
+[31m-      <section className="placeholder-page">[m
+[31m-        <p className="eyebrow">Reading memory</p>[m
+[31m-[m
+[31m-        <h1>Page not found</h1>[m
+[31m-[m
+[31m-        <p>[m
+[31m-          The page you requested does not exist.[m
+[31m-          Use the navigation menu to open another page.[m
+[31m-        </p>[m
+[31m-[m
+[31m-        <NavLink[m
+[31m-          className="welcome-action"[m
+[31m-          to="/"[m
+[31m-        >[m
+[31m-          Return to overview →[m
+[31m-        </NavLink>[m
+[31m-      </section>[m
+[31m-    )[m
+[32m+[m[32mimport { render, screen } from '@testing-library/react'[m
+[32m+[m[32mimport { MemoryRouter } from 'react-router-dom'[m
+[32m+[m[32mimport { describe, expect, it, vi } from 'vitest'[m
+[32m+[m[32mimport App from './App'[m
+[32m+[m
+[32m+[m[32mvi.mock('./features/account/accountApi', async (importOriginal) => {[m
+[32m+[m[32m  const actual =[m
+[32m+[m[32m    await importOriginal<[m
+[32m+[m[32m      typeof import('./features/account/accountApi')[m
+[32m+[m[32m    >()[m
+[32m+[m
+[32m+[m[32m  return {[m
+[32m+[m[32m    ...actual,[m
+[32m+[m
+[32m+[m[32m    // Tests start as a guest instead of making a real HTTP request.[m
+[32m+[m[32m    getCurrentAccount: vi.fn().mockResolvedValue(null),[m
+   }[m
+[31m-[m
+[31m-  return ([m
+[31m-    <section className="placeholder-page">[m
+[31m-      <p className="eyebrow">[m
+[31m-        Reading memory[m
+[31m-      </p>[m
+[31m-[m
+[31m-      <h1>{page.title}</h1>[m
+[31m-[m
+[31m-      <p>{page.description}</p>[m
+[31m-[m
+[31m-      <span className="phase-label">[m
+[31m-        <Clock3 size={15} />[m
+[31m-        Foundation phase[m
+[31m-      </span>[m
+[31m-    </section>[m
+[31m-  )[m
+[31m-}[m
+[31m-[m
+[31m-function App() {[m
+[31m-  const [account, setAccount] = useState<Account | null>(null)[m
+[31m-  const [authLoading, setAuthLoading] = useState(true)[m
+[31m-  const [loggingOut, setLoggingOut] = useState(false)[m
+[31m-  const [authError, setAuthError] = useState('')[m
+[31m-[m
+[31m-  useEffect(() => {[m
+[31m-    void trackAnalyticsEvent('daily_visit')[m
+[31m-  }, [])[m
+[31m-[m
+[31m-  // Restore the current account from the existing session cookie.[m
+[31m-  useEffect(() => {[m
+[31m-    let active = true[m
+[31m-[m
+[31m-    void getCurrentAccount()[m
+[31m-      .then((result) => {[m
+[31m-        if (active) {[m
+[31m-          setAccount(result)[m
+[31m-        }[m
+[31m-      })[m
+[31m-      .catch(() => {[m
+[31m-        if (active) {[m
+[31m-          setAccount(null)[m
+[31m-        }[m
+[31m-      })[m
+[31m-      .finally(() => {[m
+[31m-        if (active) {[m
+[31m-          setAuthLoading(false)[m
+[31m-        }[m
+[31m-      })[m
+[31m-[m
+[31m-    function handleAccountChange(event: Event) {[m
+[31m-      const customEvent = event as CustomEvent<Account | null>[m
+[31m-[m
+[31m-      setAccount(customEvent.detail)[m
+[31m-      setAuthError('')[m
+[31m-    }[m
+[31m-[m
+[31m-    window.addEventListener([m
+[31m-      ACCOUNT_CHANGED_EVENT,[m
+[31m-      handleAccountChange,[m
+[32m+[m[32m})[m
+[32m+[m
+[32m+[m[32mdescribe('Reading Memory foundation', () => {[m
+[32m+[m[32m  it('renders the empty library state and primary navigation', async () => {[m
+[32m+[m[32m    render([m
+[32m+[m[32m      <MemoryRouter>[m
+[32m+[m[32m        <App />[m
+[32m+[m[32m      </MemoryRouter>,[m
+     )[m
+ [m
+[31m-    return () => {[m
+[31m-      active = false[m
+[31m-[m
+[31m-      window.removeEventListener([m
+[31m-        ACCOUNT_CHANGED_EVENT,[m
+[31m-        handleAccountChange,[m
+[31m-      )[m
+[31m-    }[m
+[31m-  }, [])[m
+[31m-[m
+[31m-  async function handleLogout() {[m
+[31m-    if (loggingOut) {[m
+[31m-      return[m
+[31m-    }[m
+[31m-[m
+[31m-    setLoggingOut(true)[m
+[31m-    setAuthError('')[m
+[31m-[m
+[31m-    try {[m
+[31m-      await logoutAccount()[m
+[31m-[m
+[31m-      setAccount(null)[m
+[31m-[m
+[31m-      // Notify other components about the authentication change.[m
+[31m-      notifyAccountChanged(null)[m
+[31m-    } catch (error: unknown) {[m
+[31m-      setAuthError([m
+[31m-        error instanceof Error[m
+[31m-          ? error.message[m
+[31m-          : 'Could not sign out.',[m
+[31m-      )[m
+[31m-    } finally {[m
+[31m-      setLoggingOut(false)[m
+[31m-    }[m
+[31m-  }[m
+[31m-[m
+[31m-  return ([m
+[31m-    <div className="app-shell">[m
+[31m-      <aside className="sidebar">[m
+[31m-        <NavLink[m
+[31m-          className="brand"[m
+[31m-          to="/"[m
+[31m-          aria-label="Reading Memory home"[m
+[31m-        >[m
+[31m-          <span className="brand-mark">[m
+[31m-            <BookOpen size={20} />[m
+[31m-          </span>[m
+[31m-[m
+[31m-          <span>Reading Memory</span>[m
+[31m-        </NavLink>[m
+[31m-[m
+[31m-        <div className="nav-caption">[m
+[31m-          Workspace[m
+[31m-        </div>[m
+[31m-[m
+[31m-        <nav aria-label="Main navigation">[m
+[31m-          {navigation.map([m
+[31m-            ({ label, to, icon: Icon }) => ([m
+[31m-              <NavLink[m
+[31m-                key={to}[m
+[31m-                to={to}[m
+[31m-                end={to === '/'}[m
+[31m-                className={({ isActive }) =>[m
+[31m-                  `nav-link${isActive ? ' active' : ''}`[m
+[31m-                }[m
+[31m-              >[m
+[31m-                <Icon[m
+[31m-                  size={17}[m
+[31m-                  strokeWidth={1.8}[m
+[31m-                />[m
+[31m-[m
+[31m-                <span>{label}</span>[m
+[31m-              </NavLink>[m
+[31m-            ),[m
+[31m-          )}[m
+[31m-        </nav>[m
+[31m-[m
+[31m-        <div className="sidebar-bottom">[m
+[31m-          <div className="device-status">[m
+[31m-            <span />[m
+[31m-            Local-first design[m
+[31m-          </div>[m
+[31m-        </div>[m
+[31m-      </aside>[m
+[31m-[m
+[31m-      <div className="app-main">[m
+[31m-        <header className="topbar">[m
+[31m-          <span>Personal library</span>[m
+[31m-[m
+[31m-          <div className="topbar-actions">[m
+[31m-            <span className="local-badge">[m
+[31m-              <LockKeyhole size={13} />[m
+[31m-              Local space[m
+[31m-            </span>[m
+[31m-[m
+[31m-            {!authLoading && account && ([m
+[31m-              <button[m
+[31m-                className="secondary-button"[m
+[31m-                type="button"[m
+[31m-                onClick={() => void handleLogout()}[m
+[31m-                disabled={loggingOut}[m
+[31m-                aria-label="Log out of your account"[m
+[31m-              >[m
+[31m-                <LogOut size={15} />[m
+[31m-[m
+[31m-                {loggingOut[m
+[31m-                  ? 'Signing out…'[m
+[31m-                  : 'Log out'}[m
+[31m-              </button>[m
+[31m-            )}[m
+[31m-          </div>[m
+[31m-        </header>[m
+[31m-[m
+[31m-        {authError && ([m
+[31m-          <p[m
+[31m-            className="error-message"[m
+[31m-            role="alert"[m
+[31m-          >[m
+[31m-            {authError}[m
+[31m-          </p>[m
+[31m-        )}[m
+[31m-[m
+[31m-        <main className="app-content">[m
+[31m-          <div className="content-wrap">[m
+[31m-            <Routes>[m
+[31m-              <Route[m
+[31m-                path="/"[m
+[31m-                element={<Overview />}[m
+[31m-              />[m
+[31m-[m
+[31m-              <Route[m
+[31m-                path="/library"[m
+[31m-                element={<LibraryPage />}[m
+[31m-              />[m
+[31m-[m
+[31m-              <Route[m
+[31m-                path="/book/:id"[m
+[31m-                element={<ReaderPage />}[m
+[31m-              />[m
+[31m-[m
+[31m-              <Route[m
+[31m-                path="/memory"[m
+[31m-                element={<ReadingMemoryPage />}[m
+[31m-              />[m
+[31m-[m
+[31m-              <Route[m
+[31m-                path="/notes"[m
+[31m-                element={<NotesPage />}[m
+[31m-              />[m
+[31m-[m
+[31m-              <Route[m
+[31m-                path="/account"[m
+[31m-                element={<AccountPage />}[m
+[31m-              />[m
+[31m-[m
+[31m-              <Route[m
+[31m-                path="/memory-test"[m
+[31m-                element={<EmbeddingTest />}[m
+[31m-              />[m
+[31m-[m
+[31m-              <Route[m
+[31m-                path="*"[m
+[31m-                element={<RoutedPage />}[m
+[31m-              />[m
+[31m-            </Routes>[m
+[31m-          </div>[m
+[31m-        </main>[m
+[31m-      </div>[m
+[31m-    </div>[m
+[31m-  )[m
+[31m-}[m
+[31m-[m
+[31m-export default App[m
+\ No newline at end of file[m
+[32m+[m[32m    // Wait for the guest database to initialize.[m
+[32m+[m[32m    expect([m
+[32m+[m[32m      await screen.findByRole('heading', {[m
+[32m+[m[32m        name: 'A fresh page',[m
+[32m+[m[32m      }),[m
+[32m+[m[32m    ).toBeInTheDocument()[m
+[32m+[m
+[32m+[m[32m    expect(screen.getByText('0 books')).toBeInTheDocument()[m
+[32m+[m
+[32m+[m[32m    expect([m
+[32m+[m[32m      screen.getByRole('navigation', {[m
+[32m+[m[32m        name: 'Main navigation',[m
+[32m+[m[32m      }),[m
+[32m+[m[32m    ).toBeInTheDocument()[m
+[32m+[m
+[32m+[m[32m    expect([m
+[32m+[m[32m      screen.getByText(/Local by default/),[m
+[32m+[m[32m    ).toBeInTheDocument()[m
+[32m+[m[32m  })[m
+[32m+[m[32m})[m
+\ No newline at end of file[m

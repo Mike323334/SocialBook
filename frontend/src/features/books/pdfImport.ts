@@ -9,7 +9,8 @@ import {
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 import {
-  database,
+  getActiveDatabase,
+  type ReadingMemoryDB,
   type DocumentRecord,
   type OutlineItem,
   type PageRecord,
@@ -78,7 +79,7 @@ async function resolvePageNumber(
   }
 }
 
-/** Bookmarks stored inside the PDF itself (what a viewer's side panel shows). */
+/** Bookmarks stored inside the PDF itself. */
 async function extractEmbeddedOutline(
   pdf: PDFDocumentProxy,
 ): Promise<OutlineItem[]> {
@@ -95,6 +96,7 @@ async function extractEmbeddedOutline(
         pageNumber: await resolvePageNumber(pdf, node.dest),
         depth,
       })
+
       await walk(node.items ?? [], depth + 1)
     }
   }
@@ -112,7 +114,7 @@ interface PositionedText {
   transform: number[]
 }
 
-/** Text of one page as visual lines (title and page number stay together). */
+/** Text of one page as visual lines. */
 async function getPageLines(page: PDFPageProxy): Promise<string[]> {
   const content = await page.getTextContent()
 
@@ -136,8 +138,12 @@ async function getPageLines(page: PDFPageProxy): Promise<string[]> {
 
   for (const item of items) {
     const last = lines[lines.length - 1]
-    if (last && Math.abs(last.y - item.y) <= 3) last.items.push(item)
-    else lines.push({ y: item.y, items: [item] })
+
+    if (last && Math.abs(last.y - item.y) <= 3) {
+      last.items.push(item)
+    } else {
+      lines.push({ y: item.y, items: [item] })
+    }
   }
 
   return lines.map((line) =>
@@ -149,30 +155,28 @@ async function getPageLines(page: PDFPageProxy): Promise<string[]> {
   )
 }
 
-/** For books without bookmarks: read the printed "Table of Contents" pages. */
+/** Reads the printed table of contents when bookmarks are unavailable. */
 async function extractPrintedOutline(
   pdf: PDFDocumentProxy,
   pageTexts: string[],
 ): Promise<OutlineItem[]> {
   const tocPages = findTocPages(pageTexts)
+
   if (tocPages.length === 0) return []
 
   const lines: string[] = []
 
   for (const index of tocPages) {
     const page = await pdf.getPage(index + 1)
+
     lines.push(...(await getPageLines(page)))
+
     page.cleanup()
   }
 
   return buildOutlineFromPrintedToc(lines, pageTexts, tocPages)
 }
 
-/**
- * Chapters for the reader's left column. Uses the PDF's own bookmarks when
- * there are any, otherwise the printed table of contents (needs `pageTexts`,
- * the extracted text of every page in order).
- */
 export async function extractOutline(
   pdf: PDFDocumentProxy,
   pageTexts?: string[],
@@ -181,13 +185,17 @@ export async function extractOutline(
     () => [] as OutlineItem[],
   )
 
-  if (!pageTexts || countLinked(embedded) >= 5) return embedded
+  if (!pageTexts || countLinked(embedded) >= 5) {
+    return embedded
+  }
 
   const printed = await extractPrintedOutline(pdf, pageTexts).catch(
     () => [] as OutlineItem[],
   )
 
-  return countLinked(printed) > countLinked(embedded) ? printed : embedded
+  return countLinked(printed) > countLinked(embedded)
+    ? printed
+    : embedded
 }
 
 export async function extractOutlineFromFile(
@@ -200,17 +208,23 @@ export async function extractOutlineFromFile(
 
   try {
     const pdf = await loadingTask.promise
+
     return await extractOutline(pdf, pageTexts)
   } finally {
     await loadingTask.destroy()
   }
 }
 
+/**
+ * Imports a PDF into the database captured for this operation.
+ *
+ * The database reference is captured once so an account switch during
+ * extraction or indexing cannot redirect writes to another account.
+ */
 export async function importPdf(
   file: File,
-  onProgress?: (
-    progress: PdfImportProgress,
-  ) => void,
+  onProgress?: (progress: PdfImportProgress) => void,
+  db: ReadingMemoryDB = getActiveDatabase(),
 ): Promise<PdfImportResult> {
   if (
     file.type !== 'application/pdf' &&
@@ -229,9 +243,7 @@ export async function importPdf(
 
   let pdf: PDFDocumentProxy | undefined
 
-  let loadingTask:
-    | PDFDocumentLoadingTask
-    | undefined
+  let loadingTask: PDFDocumentLoadingTask | undefined
 
   try {
     onProgress?.({
@@ -244,17 +256,14 @@ export async function importPdf(
 
     pdf = await loadingTask.promise
 
-    const metadata =
-      await pdf.getMetadata()
+    const metadata = await pdf.getMetadata()
 
-    const info =
-      metadata.info as {
-        Title?: string
-        Author?: string
-      }
+    const info = metadata.info as {
+      Title?: string
+      Author?: string
+    }
 
-    const documentId =
-      crypto.randomUUID()
+    const documentId = crypto.randomUUID()
 
     const pages: PageRecord[] = []
 
@@ -271,29 +280,20 @@ export async function importPdf(
         total: pdf.numPages,
       })
 
-      const page =
-        await pdf.getPage(pageNumber)
+      const page = await pdf.getPage(pageNumber)
 
-      const content =
-        await page.getTextContent()
+      const content = await page.getTextContent()
 
-      const text =
-        content.items
-          .filter(
-            item => 'str' in item,
-          )
-          .map(
-            item => item.str.trim(),
-          )
-          .filter(Boolean)
-          .join(' ')
+      const text = content.items
+        .filter((item) => 'str' in item)
+        .map((item) => item.str.trim())
+        .filter(Boolean)
+        .join(' ')
 
-      extractedCharacters +=
-        text.length
+      extractedCharacters += text.length
 
       pages.push({
-        id:
-          `${documentId}:${pageNumber}`,
+        id: `${documentId}:${pageNumber}`,
         documentId,
         pageNumber,
         text,
@@ -308,7 +308,6 @@ export async function importPdf(
       )
     }
 
-    // A malformed outline must never break an import.
     const outline = await extractOutline(
       pdf,
       pages.map((page) => page.text),
@@ -316,17 +315,14 @@ export async function importPdf(
 
     const now = new Date()
 
-    const document: DocumentRecord & { outlineVersion?: number } = {
+    const document: DocumentRecord & {
+      outlineVersion?: number
+    } = {
       id: documentId,
       title:
         info.Title?.trim() ||
-        file.name.replace(
-          /\.pdf$/i,
-          '',
-        ),
-      author:
-        info.Author?.trim() ||
-        null,
+        file.name.replace(/\.pdf$/i, ''),
+      author: info.Author?.trim() || null,
       fileName: file.name,
       fileSize: file.size,
       pageCount: pdf.numPages,
@@ -342,18 +338,16 @@ export async function importPdf(
       stage: 'saving',
     })
 
-    await database.transaction(
+    await db.transaction(
       'rw',
-      database.documents,
-      database.pages,
+      [
+        db.documents,
+        db.pages,
+      ],
       async () => {
-        await database.documents.add(
-          document,
-        )
+        await db.documents.add(document)
 
-        await database.pages.bulkAdd(
-          pages,
-        )
+        await db.pages.bulkAdd(pages)
       },
     )
 
@@ -361,10 +355,10 @@ export async function importPdf(
       stage: 'chunking',
     })
 
-    const chunksCreated =
-      await indexDocument(
-        documentId,
-      )
+    const chunksCreated = await indexDocument(
+      documentId,
+      db,
+    )
 
     onProgress?.({
       stage: 'embedding',
@@ -372,36 +366,29 @@ export async function importPdf(
       total: chunksCreated,
     })
 
-    const embeddingsCreated =
-      await indexDocumentEmbeddings(
-        documentId,
-        (progress: EmbeddingProgress) => {
-          onProgress?.({
-            stage: 'embedding',
-            current:
-              progress.completed,
-            total:
-              progress.total,
-          })
-        },
-      )
+    const embeddingsCreated = await indexDocumentEmbeddings(
+      documentId,
+      (progress: EmbeddingProgress) => {
+        onProgress?.({
+          stage: 'embedding',
+          current: progress.completed,
+          total: progress.total,
+        })
+      },
+      db,
+    )
 
     return {
       document,
       extractedCharacters,
-      scanned:
-        extractedCharacters /
-          pdf.numPages <
-        30,
+      scanned: extractedCharacters / pdf.numPages < 30,
       chunksCreated,
       embeddingsCreated,
     }
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.startsWith(
-        'No selectable text',
-      )
+      error.message.startsWith('No selectable text')
     ) {
       throw error
     }

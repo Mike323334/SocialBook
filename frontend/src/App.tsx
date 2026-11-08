@@ -1,25 +1,33 @@
 import { useEffect, useState } from 'react'
+
 import {
   NavLink,
+  Navigate,
   Route,
   Routes,
   useLocation,
 } from 'react-router-dom'
+
 import { useLiveQuery } from 'dexie-react-hooks'
 
 import {
   BookOpen,
   Bookmark,
   BrainCircuit,
+  ChevronDown,
   Clock3,
   Compass,
   Library,
   LockKeyhole,
   LogOut,
+  MessageCircle,
   UserRound,
 } from 'lucide-react'
 
 import EmbeddingTest from './features/memory/EmbeddingTest'
+
+import { AskMyBooksPage } from './features/chat/AskMyBooksPage'
+
 import './App.css'
 
 import {
@@ -27,7 +35,11 @@ import {
   ReaderPage,
 } from './features/books/LibraryPage'
 
-import { database } from './db/database'
+import {
+  activateDatabase,
+  getActiveDatabase,
+} from './db/database'
+
 import { trackAnalyticsEvent } from './features/analytics/analyticsClient'
 
 import { AccountPage } from './features/account/AccountPage'
@@ -41,12 +53,16 @@ import {
 } from './features/account/accountApi'
 
 import { ReadingMemoryPage } from './features/memory/ReadingMemoryPage'
+
 import { NotesPage } from './features/notes/NotesPage'
+
+// -----------------------------------------------------------------------------
+// Navigation
+// -----------------------------------------------------------------------------
 
 const navigation = [
   { label: 'Overview', to: '/', icon: Compass },
   { label: 'Library', to: '/library', icon: Library },
-  { label: 'My memory', to: '/memory', icon: BrainCircuit },
   { label: 'Notes', to: '/notes', icon: Bookmark },
   { label: 'Account', to: '/account', icon: UserRound },
 ]
@@ -60,11 +76,13 @@ const pageCopy: Record<
     description:
       'Books you add will be organized here and stored on this device.',
   },
+
   '/memory': {
     title: 'Your reading memory',
     description:
       'Questions, notes, and connections will build your personal reading history.',
   },
+
   '/notes': {
     title: 'Your notes',
     description:
@@ -72,10 +90,16 @@ const pageCopy: Record<
   },
 }
 
+// -----------------------------------------------------------------------------
+// Overview
+// -----------------------------------------------------------------------------
+
 function Overview() {
+  const db = getActiveDatabase()
+
   const bookCount = useLiveQuery(
-    () => database.documents.count(),
-    [],
+    () => db.documents.count(),
+    [db],
     0,
   )
 
@@ -179,6 +203,10 @@ function Overview() {
   )
 }
 
+// -----------------------------------------------------------------------------
+// Fallback page
+// -----------------------------------------------------------------------------
+
 function RoutedPage() {
   const { pathname } = useLocation()
 
@@ -224,36 +252,103 @@ function RoutedPage() {
   )
 }
 
+// -----------------------------------------------------------------------------
+// Workspace loading and error states
+// -----------------------------------------------------------------------------
+
+function WorkspaceLoading() {
+  return (
+    <section className="placeholder-page">
+      <p className="eyebrow">Reading memory</p>
+
+      <h1>Preparing your workspace...</h1>
+
+      <p>
+        Opening your local reading database.
+        Please wait.
+      </p>
+    </section>
+  )
+}
+
+function WorkspaceError({
+  message,
+  onRetry,
+  retrying,
+}: {
+  message: string
+  onRetry: () => void
+  retrying: boolean
+}) {
+  return (
+    <section className="placeholder-page">
+      <p className="eyebrow">Reading memory</p>
+
+      <h1>Workspace initialization failed</h1>
+
+      <p role="alert">{message}</p>
+
+      <button
+        type="button"
+        className="secondary-button"
+        onClick={onRetry}
+        disabled={retrying}
+      >
+        {retrying ? 'Retrying...' : 'Retry'}
+      </button>
+    </section>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Main application
+// -----------------------------------------------------------------------------
+
 function App() {
+  const location = useLocation()
+
+  const isMemoryRoute =
+    location.pathname === '/memory' ||
+    location.pathname === '/ask-books'
+
+  const [memoryMenuOverride, setMemoryMenuOverride] =
+    useState<boolean | null>(null)
+
+  const memoryMenuOpen =
+    memoryMenuOverride ?? isMemoryRoute
+
   const [account, setAccount] = useState<Account | null>(null)
+
   const [authLoading, setAuthLoading] = useState(true)
+
   const [loggingOut, setLoggingOut] = useState(false)
+
   const [authError, setAuthError] = useState('')
+
+  // undefined = database not initialized
+  // null = guest database initialized
+  // string = authenticated account database initialized
+  const [workspaceAccountId, setWorkspaceAccountId] =
+    useState<string | null | undefined>(undefined)
+
+  const [workspaceError, setWorkspaceError] = useState('')
+
+  const [workspaceRetry, setWorkspaceRetry] = useState(0)
+
+  // ---------------------------------------------------------------------------
+  // Analytics
+  // ---------------------------------------------------------------------------
 
   useEffect(() => {
     void trackAnalyticsEvent('daily_visit')
   }, [])
 
-  // Restore the current account from the existing session cookie.
+  // ---------------------------------------------------------------------------
+  // Restore authentication session
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
     let active = true
-
-    void getCurrentAccount()
-      .then((result) => {
-        if (active) {
-          setAccount(result)
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setAccount(null)
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setAuthLoading(false)
-        }
-      })
 
     function handleAccountChange(event: Event) {
       const customEvent = event as CustomEvent<Account | null>
@@ -267,6 +362,28 @@ function App() {
       handleAccountChange,
     )
 
+    void getCurrentAccount()
+      .then((result) => {
+        if (active) {
+          setAccount(result)
+        }
+      })
+      .catch((error) => {
+        console.error(
+          '[Auth] Could not restore session:',
+          error,
+        )
+
+        if (active) {
+          setAccount(null)
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAuthLoading(false)
+        }
+      })
+
     return () => {
       active = false
 
@@ -276,6 +393,91 @@ function App() {
       )
     }
   }, [])
+
+  // ---------------------------------------------------------------------------
+  // Activate account-specific IndexedDB
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (authLoading) {
+      return
+    }
+
+    let cancelled = false
+
+    const accountId = account?.id ?? null
+
+    setWorkspaceAccountId(undefined)
+    setWorkspaceError('')
+
+    async function initializeWorkspace() {
+      try {
+        console.log(
+          '[Workspace] Starting database activation:',
+          accountId ?? 'guest',
+        )
+
+        const db = await activateDatabase(accountId)
+
+        if (cancelled) {
+          return
+        }
+
+        console.log(
+          '[Workspace] Database activated:',
+          db.name,
+        )
+
+        setWorkspaceAccountId(accountId)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        console.error(
+          '[Workspace] Database activation failed:',
+          error,
+        )
+
+        setWorkspaceError(
+          error instanceof Error
+            ? error.message
+            : 'Could not initialize your local workspace.',
+        )
+      }
+    }
+
+    void initializeWorkspace()
+
+    return () => {
+      cancelled = true
+    }
+  }, [account?.id, authLoading, workspaceRetry])
+
+  // ---------------------------------------------------------------------------
+  // Workspace status
+  // ---------------------------------------------------------------------------
+
+  const expectedAccountId = account?.id ?? null
+
+  const workspaceReady =
+    !authLoading &&
+    workspaceAccountId === expectedAccountId &&
+    !workspaceError
+
+  // ---------------------------------------------------------------------------
+  // Retry workspace activation
+  // ---------------------------------------------------------------------------
+
+  function handleWorkspaceRetry() {
+    setWorkspaceError('')
+    setWorkspaceAccountId(undefined)
+    setWorkspaceRetry((current) => current + 1)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Logout
+  // ---------------------------------------------------------------------------
 
   async function handleLogout() {
     if (loggingOut) {
@@ -290,7 +492,6 @@ function App() {
 
       setAccount(null)
 
-      // Notify other components about the authentication change.
       notifyAccountChanged(null)
     } catch (error: unknown) {
       setAuthError(
@@ -302,6 +503,10 @@ function App() {
       setLoggingOut(false)
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <div className="app-shell">
@@ -323,25 +528,70 @@ function App() {
         </div>
 
         <nav aria-label="Main navigation">
-          {navigation.map(
-            ({ label, to, icon: Icon }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                className={({ isActive }) =>
-                  `nav-link${isActive ? ' active' : ''}`
-                }
-              >
-                <Icon
-                  size={17}
-                  strokeWidth={1.8}
-                />
+          {navigation.map(({ label, to, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) =>
+                `nav-link${isActive ? ' active' : ''}`
+              }
+            >
+              <Icon size={17} strokeWidth={1.8} />
+              <span>{label}</span>
+            </NavLink>
+          ))}
 
-                <span>{label}</span>
-              </NavLink>
-            ),
-          )}
+          <div className="memory-nav-group">
+            <button
+              type="button"
+              className={`memory-nav-trigger${isMemoryRoute ? ' active' : ''}`}
+              aria-expanded={memoryMenuOpen}
+              aria-controls="memory-submenu"
+              onClick={() =>
+                setMemoryMenuOverride(!memoryMenuOpen)
+              }
+            >
+              <BrainCircuit size={17} strokeWidth={1.8} />
+
+              <span>My Memory</span>
+
+              <ChevronDown
+                size={15}
+                className={memoryMenuOpen ? 'rotated' : ''}
+              />
+            </button>
+
+            {memoryMenuOpen && (
+              <div
+                id="memory-submenu"
+                className="memory-nav-submenu"
+              >
+                <NavLink
+                  to="/memory"
+                  className={({ isActive }) =>
+                    `memory-sub-link${isActive ? ' active' : ''}`
+                  }
+                >
+                  <BrainCircuit size={15} />
+                  <span>Reading Memory</span>
+                </NavLink>
+
+                {/* Ask My Books is visible only to authenticated users. */}
+                {account && !loggingOut && (
+                  <NavLink
+                    to="/ask-books"
+                    className={({ isActive }) =>
+                      `memory-sub-link${isActive ? ' active' : ''}`
+                    }
+                  >
+                    <MessageCircle size={15} />
+                    <span>Ask My Books</span>
+                  </NavLink>
+                )}
+              </div>
+            )}
+          </div>
         </nav>
 
         <div className="sidebar-bottom">
@@ -373,7 +623,7 @@ function App() {
                 <LogOut size={15} />
 
                 {loggingOut
-                  ? 'Signing out…'
+                  ? 'Signing out...'
                   : 'Log out'}
               </button>
             )}
@@ -391,47 +641,74 @@ function App() {
 
         <main className="app-content">
           <div className="content-wrap">
-            <Routes>
-              <Route
-                path="/"
-                element={<Overview />}
+            {authLoading ? (
+              <WorkspaceLoading />
+            ) : workspaceError ? (
+              <WorkspaceError
+                message={workspaceError}
+                onRetry={handleWorkspaceRetry}
+                retrying={workspaceAccountId === undefined}
               />
+            ) : !workspaceReady ? (
+              <WorkspaceLoading />
+            ) : (
+              <Routes>
+                <Route
+                  path="/"
+                  element={<Overview />}
+                />
 
-              <Route
-                path="/library"
-                element={<LibraryPage />}
-              />
+                <Route
+                  path="/library"
+                  element={<LibraryPage />}
+                />
 
-              <Route
-                path="/book/:id"
-                element={<ReaderPage />}
-              />
+                <Route
+                  path="/book/:id"
+                  element={<ReaderPage />}
+                />
 
-              <Route
-                path="/memory"
-                element={<ReadingMemoryPage />}
-              />
+                {/* Protected route: authentication is required. */}
+                <Route
+                  path="/ask-books"
+                  element={
+                    account && !loggingOut ? (
+                      <AskMyBooksPage />
+                    ) : (
+                      <Navigate
+                        to="/account"
+                        replace
+                      />
+                    )
+                  }
+                />
 
-              <Route
-                path="/notes"
-                element={<NotesPage />}
-              />
+                <Route
+                  path="/memory"
+                  element={<ReadingMemoryPage />}
+                />
 
-              <Route
-                path="/account"
-                element={<AccountPage />}
-              />
+                <Route
+                  path="/notes"
+                  element={<NotesPage account={account} />}
+                />
 
-              <Route
-                path="/memory-test"
-                element={<EmbeddingTest />}
-              />
+                <Route
+                  path="/account"
+                  element={<AccountPage />}
+                />
 
-              <Route
-                path="*"
-                element={<RoutedPage />}
-              />
-            </Routes>
+                <Route
+                  path="/memory-test"
+                  element={<EmbeddingTest />}
+                />
+
+                <Route
+                  path="*"
+                  element={<RoutedPage />}
+                />
+              </Routes>
+            )}
           </div>
         </main>
       </div>

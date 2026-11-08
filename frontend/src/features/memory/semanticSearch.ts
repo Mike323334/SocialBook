@@ -1,4 +1,7 @@
-import { database } from '../../db/database'
+import {
+  getActiveDatabase,
+  type ReadingMemoryDB,
+} from '../../db/database'
 
 export interface SemanticSearchResult {
   chunkId: string
@@ -15,6 +18,7 @@ export interface LoadedSemanticData {
     documentId: string
     vector: Float32Array
   }>
+
   chunks: Map<
     string,
     {
@@ -24,6 +28,7 @@ export interface LoadedSemanticData {
       text: string
     }
   >
+
   documents: Map<
     string,
     {
@@ -33,13 +38,8 @@ export interface LoadedSemanticData {
   >
 }
 
-
 /**
  * Calculate cosine similarity between two vectors.
- *
- * The embedding model produces normalized vectors,
- * but we calculate the full cosine similarity here
- * so the function remains safe if that changes later.
  */
 export function cosineSimilarity(
   a: Float32Array | number[],
@@ -81,60 +81,55 @@ export function cosineSimilarity(
   )
 }
 
-
 /**
- * Load ALL semantic-search data from IndexedDB once.
+ * Load semantic-search data from the specified account database.
  *
- * The old implementation repeatedly queried IndexedDB
- * while comparing chunks. That became very expensive with
- * 1,000+ chunks.
- *
- * This function loads everything once and lets JavaScript
- * perform the comparisons in memory.
+ * Passing an explicit database instance prevents an account switch
+ * during an asynchronous operation from mixing private data.
  */
-export async function loadSemanticData(): Promise<LoadedSemanticData> {
+export async function loadSemanticData(
+  db: ReadingMemoryDB = getActiveDatabase(),
+): Promise<LoadedSemanticData> {
+  const operationDatabase = db
+
   const [
     embeddings,
     chunks,
     documents,
   ] = await Promise.all([
-    database.memoryEmbeddings
+    operationDatabase.memoryEmbeddings
       .where('model')
       .equals('Xenova/all-MiniLM-L6-v2')
       .toArray(),
 
-    database.memoryChunks.toArray(),
+    operationDatabase.memoryChunks.toArray(),
 
-    database.documents.toArray(),
+    operationDatabase.documents.toArray(),
   ])
 
   return {
     embeddings: embeddings.map(
-      embedding => ({
+      (embedding) => ({
         id: embedding.id,
-        documentId:
-          embedding.documentId,
-        vector:
-          embedding.vector,
+        documentId: embedding.documentId,
+        vector: embedding.vector,
       }),
     ),
 
     chunks: new Map(
-      chunks.map(chunk => [
+      chunks.map((chunk) => [
         chunk.id,
         {
           id: chunk.id,
-          documentId:
-            chunk.documentId,
-          pageNumber:
-            chunk.pageNumber,
+          documentId: chunk.documentId,
+          pageNumber: chunk.pageNumber,
           text: chunk.text,
         },
       ]),
     ),
 
     documents: new Map(
-      documents.map(document => [
+      documents.map((document) => [
         document.id,
         {
           id: document.id,
@@ -145,11 +140,11 @@ export async function loadSemanticData(): Promise<LoadedSemanticData> {
   }
 }
 
-
 /**
  * Search using already-loaded semantic data.
  *
- * This is the fast path used by the new comparison system.
+ * This function does not access IndexedDB.
+ * All comparisons happen in memory.
  */
 export function searchLoadedSemanticData(
   queryEmbedding: Float32Array | number[],
@@ -161,8 +156,7 @@ export function searchLoadedSemanticData(
     minSimilarity?: number
   },
 ): SemanticSearchResult[] {
-  const limit =
-    options?.limit ?? 10
+  const limit = options?.limit ?? 10
 
   const minSimilarity =
     options?.minSimilarity ?? -Infinity
@@ -172,9 +166,7 @@ export function searchLoadedSemanticData(
     similarity: number
   }> = []
 
-  for (
-    const embedding of data.embeddings
-  ) {
+  for (const embedding of data.embeddings) {
     if (
       options?.excludeDocumentId &&
       embedding.documentId ===
@@ -185,22 +177,17 @@ export function searchLoadedSemanticData(
 
     if (
       options?.excludeChunkId &&
-      embedding.id ===
-        options.excludeChunkId
+      embedding.id === options.excludeChunkId
     ) {
       continue
     }
 
-    const similarity =
-      cosineSimilarity(
-        queryEmbedding,
-        embedding.vector,
-      )
+    const similarity = cosineSimilarity(
+      queryEmbedding,
+      embedding.vector,
+    )
 
-    if (
-      similarity >=
-      minSimilarity
-    ) {
+    if (similarity >= minSimilarity) {
       scored.push({
         embedding,
         similarity,
@@ -209,83 +196,68 @@ export function searchLoadedSemanticData(
   }
 
   scored.sort(
-    (a, b) =>
-      b.similarity -
-      a.similarity,
+    (a, b) => b.similarity - a.similarity,
   )
 
-  const topResults =
-    scored.slice(0, limit)
+  const topResults = scored.slice(0, limit)
 
-  return topResults.flatMap(
-    result => {
-      const chunk =
-        data.chunks.get(
-          result.embedding.id,
-        )
+  return topResults.flatMap((result) => {
+    const chunk = data.chunks.get(
+      result.embedding.id,
+    )
 
-      if (!chunk) {
-        return []
-      }
+    if (!chunk) {
+      return []
+    }
 
-      const document =
-        data.documents.get(
-          chunk.documentId,
-        )
+    const document = data.documents.get(
+      chunk.documentId,
+    )
 
-      if (!document) {
-        return []
-      }
+    if (!document) {
+      return []
+    }
 
-      return [
-        {
-          chunkId: chunk.id,
-
-          documentId:
-            chunk.documentId,
-
-          documentTitle:
-            document.title,
-
-          pageNumber:
-            chunk.pageNumber,
-
-          text:
-            chunk.text,
-
-          similarity:
-            result.similarity,
-        },
-      ]
-    },
-  )
+    return [
+      {
+        chunkId: chunk.id,
+        documentId: chunk.documentId,
+        documentTitle: document.title,
+        pageNumber: chunk.pageNumber,
+        text: chunk.text,
+        similarity: result.similarity,
+      },
+    ]
+  })
 }
-
 
 /**
  * Compatibility wrapper.
  *
- * Existing code can still call searchSimilarChunks().
+ * Existing calls remain valid:
  *
- * However, new code should prefer:
+ * searchSimilarChunks(queryEmbedding)
+ * searchSimilarChunks(queryEmbedding, options)
  *
- * loadSemanticData()
- * +
- * searchLoadedSemanticData()
+ * New code can explicitly provide the account database:
+ *
+ * searchSimilarChunks(queryEmbedding, options, db)
  */
 export async function searchSimilarChunks(
-  queryEmbedding:
-    | Float32Array
-    | number[],
+  queryEmbedding: Float32Array | number[],
   options?: {
     excludeDocumentId?: string
     excludeChunkId?: string
     limit?: number
     minSimilarity?: number
   },
+  db: ReadingMemoryDB = getActiveDatabase(),
 ): Promise<SemanticSearchResult[]> {
-  const data =
-    await loadSemanticData()
+  const operationDatabase = db
+
+  const data = await loadSemanticData(
+    operationDatabase,
+  )
 
   return searchLoadedSemanticData(
     queryEmbedding,

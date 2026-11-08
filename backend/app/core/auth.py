@@ -55,3 +55,35 @@ def get_current_user(
         )
 
     return user
+
+def get_optional_current_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> User | None:
+    """
+    Return the authenticated user when a valid session exists.
+    Allow anonymous access when no valid session exists.
+    """
+
+    if settings.jwt_secret is None:
+        return None
+
+    token = request.cookies.get(SESSION_COOKIE)
+
+    if token is None:
+        return None
+
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret.get_secret_value(),
+            algorithms=["HS256"],
+        )
+
+        user_id = UUID(payload["sub"])
+
+    except (jwt.InvalidTokenError, KeyError, ValueError):
+        return None
+
+    return db.get(User, user_id)

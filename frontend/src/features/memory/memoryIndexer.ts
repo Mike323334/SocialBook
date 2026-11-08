@@ -1,8 +1,18 @@
-import { database } from '../../db/database'
+import {
+  getActiveDatabase,
+  type ReadingMemoryDB,
+} from '../../db/database'
+
 import { chunkPage } from './chunking'
 
-export async function indexDocument(documentId: string): Promise<number> {
-  const pages = await database.pages
+export async function indexDocument(
+  documentId: string,
+  db: ReadingMemoryDB = getActiveDatabase(),
+): Promise<number> {
+  // Capture the database reference for the entire operation.
+  const operationDatabase = db
+
+  const pages = await operationDatabase.pages
     .where('documentId')
     .equals(documentId)
     .toArray()
@@ -11,7 +21,7 @@ export async function indexDocument(documentId: string): Promise<number> {
     return 0
   }
 
-  const chunks = pages.flatMap(page =>
+  const chunks = pages.flatMap((page) =>
     chunkPage({
       documentId: page.documentId,
       pageNumber: page.pageNumber,
@@ -19,21 +29,21 @@ export async function indexDocument(documentId: string): Promise<number> {
     }),
   )
 
-  const records = chunks.map(chunk => ({
+  const records = chunks.map((chunk) => ({
     ...chunk,
     createdAt: new Date(),
   }))
 
-  await database.transaction(
+  await operationDatabase.transaction(
     'rw',
-    database.memoryChunks,
+    [operationDatabase.memoryChunks],
     async () => {
-      await database.memoryChunks
+      await operationDatabase.memoryChunks
         .where('documentId')
         .equals(documentId)
         .delete()
 
-      await database.memoryChunks.bulkPut(records)
+      await operationDatabase.memoryChunks.bulkPut(records)
     },
   )
 

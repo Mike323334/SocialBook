@@ -1,0 +1,2344 @@
+
+
+========================================
+FILE: .\frontend\src\db\database.ts
+========================================
+
+import Dexie, { type EntityTable } from 'dexie'
+
+export interface OutlineItem {
+  title: string
+  pageNumber: number | null
+  depth: number
+}
+
+export interface DocumentRecord {
+  id: string
+  title: string
+  author: string | null
+  fileName: string
+  fileSize: number
+  pageCount: number
+  createdAt: Date
+  lastReadAt: Date | null
+  readingProgress: number
+  pdf: Blob
+
+  // PDF table of contents and its parser version.
+  outline?: OutlineItem[]
+  outlineVersion?: number
+}
+
+export interface PageRecord {
+  id: string
+  documentId: string
+  pageNumber: number
+  text: string
+}
+
+export interface ConversationRecord {
+  id: string
+  documentId: string
+  title: string
+  createdAt: Date
+  updatedAt: Date
+  nextSequence: number
+}
+
+export interface StoredCitation {
+  documentId: string
+  title: string
+  sourceType?: 'book_page'
+  pageNumber: number | null
+  score: number
+}
+
+export interface ChatMessageRecord {
+  id: string
+  conversationId: string
+  documentId: string
+  role: 'user' | 'assistant'
+  content: string
+  citations: StoredCitation[]
+  createdAt: Date
+  sequence: number
+  status: 'pending' | 'answered' | 'failed'
+}
+
+export interface MemoryChunkRecord {
+  id: string
+  documentId: string
+  pageNumber: number
+  chunkIndex: number
+  text: string
+  startOffset: number
+  endOffset: number
+  createdAt: Date
+}
+
+export interface MemoryEmbeddingRecord {
+  id: string
+  documentId: string
+  model: string
+  dimensions: number
+  vector: Float32Array
+  createdAt: Date
+}
+
+export interface NoteRecord {
+  id: string
+  documentId: string
+  bookTitle: string
+  content: string
+  authorName: string | null
+  chapterTitle?: string | null
+  chapterPageNumber?: number | null
+  createdAt: Date
+  updatedAt: Date
+  isPublished: boolean
+}
+
+export class ReadingMemoryDB extends Dexie {
+  documents!: EntityTable<DocumentRecord, 'id'>
+  pages!: EntityTable<PageRecord, 'id'>
+  conversations!: EntityTable<ConversationRecord, 'id'>
+  messages!: EntityTable<ChatMessageRecord, 'id'>
+  memoryChunks!: EntityTable<MemoryChunkRecord, 'id'>
+  memoryEmbeddings!: EntityTable<MemoryEmbeddingRecord, 'id'>
+  notes!: EntityTable<NoteRecord, 'id'>
+
+  constructor(name = 'ReadingMemoryDB') {
+    super(name)
+
+    this.version(1).stores({
+      documents: 'id, title, createdAt, lastReadAt',
+      pages: 'id, documentId, [documentId+pageNumber]',
+    })
+
+    this.version(2).stores({
+      documents: 'id, title, createdAt, lastReadAt',
+      pages: 'id, documentId, [documentId+pageNumber]',
+      conversations: 'id, documentId, updatedAt',
+      messages:
+        'id, conversationId, documentId, createdAt, status, [conversationId+createdAt]',
+    })
+
+    this.version(3)
+      .stores({
+        documents: 'id, title, createdAt, lastReadAt',
+        pages: 'id, documentId, [documentId+pageNumber]',
+        conversations: 'id, documentId, updatedAt',
+        messages:
+          'id, conversationId, documentId, createdAt, sequence, status, [conversationId+sequence]',
+      })
+      .upgrade(async (transaction) => {
+        const conversations =
+          (await transaction.table('conversations').toArray()) as ConversationRecord[]
+
+        const messages =
+          (await transaction.table('messages').toArray()) as ChatMessageRecord[]
+
+        const messagesByConversation = new Map<
+          string,
+          ChatMessageRecord[]
+        >()
+
+        for (const message of messages) {
+          const conversationMessages =
+            messagesByConversation.get(message.conversationId) ?? []
+
+          conversationMessages.push(message)
+
+          messagesByConversation.set(
+            message.conversationId,
+            conversationMessages,
+          )
+        }
+
+        for (const conversation of conversations) {
+          const conversationMessages =
+            messagesByConversation.get(conversation.id) ?? []
+
+          conversationMessages.sort(
+            (left, right) =>
+              new Date(left.createdAt).getTime() -
+                new Date(right.createdAt).getTime() ||
+              left.id.localeCompare(right.id),
+          )
+
+          conversationMessages.forEach((message, sequence) => {
+            message.sequence = sequence
+          })
+
+          conversation.nextSequence = conversationMessages.length
+        }
+
+        await transaction.table('messages').bulkPut(messages)
+        await transaction.table('conversations').bulkPut(conversations)
+      })
+
+    this.version(4)
+      .stores({
+        documents: 'id, title, createdAt, lastReadAt',
+        pages: 'id, documentId, [documentId+pageNumber]',
+        conversations: 'id, documentId, updatedAt',
+        messages:
+          'id, conversationId, documentId, createdAt, sequence, status, [conversationId+sequence]',
+      })
+      .upgrade(async (transaction) => {
+        const conversations =
+          (await transaction.table('conversations').toArray()) as ConversationRecord[]
+
+        for (const conversation of conversations) {
+          const firstQuestion = (await transaction
+            .table('messages')
+            .where('[conversationId+sequence]')
+            .equals([conversation.id, 0])
+            .first()) as ChatMessageRecord | undefined
+
+          if (firstQuestion?.role === 'user') {
+            conversation.title = firstQuestion.content.slice(0, 72)
+          }
+        }
+
+        await transaction.table('conversations').bulkPut(conversations)
+      })
+
+    this.version(5).stores({
+      documents: 'id, title, createdAt, lastReadAt',
+      pages: 'id, documentId, [documentId+pageNumber]',
+      conversations: 'id, documentId, updatedAt',
+      messages:
+        'id, conversationId, documentId, createdAt, sequence, status, [conversationId+sequence]',
+      importedMemories: 'id, documentId, category, importedAt',
+    })
+
+    this.version(6).stores({
+      importedMemories: null,
+    })
+
+    this.version(7).stores({
+      documents: 'id, title, createdAt, lastReadAt',
+      pages: 'id, documentId, [documentId+pageNumber]',
+      conversations: 'id, documentId, updatedAt',
+      messages:
+        'id, conversationId, documentId, createdAt, sequence, status, [conversationId+sequence]',
+      memoryChunks:
+        'id, documentId, [documentId+pageNumber], [documentId+chunkIndex]',
+      memoryEmbeddings: 'id, documentId, model',
+    })
+
+    this.version(8).stores({
+      documents: 'id, title, createdAt, lastReadAt',
+      pages: 'id, documentId, [documentId+pageNumber]',
+      conversations: 'id, documentId, updatedAt',
+      messages:
+        'id, conversationId, documentId, createdAt, sequence, status, [conversationId+sequence]',
+      memoryChunks:
+        'id, documentId, [documentId+pageNumber], [documentId+chunkIndex]',
+      memoryEmbeddings: 'id, documentId, model',
+      notes: 'id, documentId, createdAt, updatedAt, isPublished',
+    })
+  }
+}
+
+export const database = new ReadingMemoryDB()
+
+
+========================================
+FILE: .\frontend\src\features\books\LibraryPage.tsx
+========================================
+
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { BookOpen, FilePlus2, FileText, LoaderCircle, Trash2 } from 'lucide-react'
+import { database, type DocumentRecord, type OutlineItem, type PageRecord } from '../../db/database'
+import { BookChatPanel } from '../chat/BookChatPanel'
+import { trackAnalyticsEvent } from '../analytics/analyticsClient'
+import { OUTLINE_VERSION } from './tocParser'
+
+type StoredBook = DocumentRecord & { outlineVersion?: number }
+
+function formatSize(bytes: number): string {
+  return bytes < 1024 * 1024
+    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+    : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function LibraryPage() {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const books = useLiveQuery(() => database.documents.orderBy('createdAt').reverse().toArray(), [], [])
+  const [busy, setBusy] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  async function addFile(file?: File) {
+    if (!file) return
+    setError('')
+    setMessage('Extracting text and saving this book on your device...')
+    setBusy(true)
+    try {
+      const { importPdf } = await import('./pdfImport')
+      const result = await importPdf(file)
+      void trackAnalyticsEvent('book_upload')
+      setMessage(result.scanned
+        ? 'Book saved locally. This PDF appears to be scanned; some pages may have little or no selectable text.'
+        : `Book saved locally. Extracted ${result.extractedCharacters.toLocaleString()} characters from ${result.document.pageCount} pages.`)
+    } catch (cause) {
+      setMessage('')
+      setError(cause instanceof Error ? cause.message : 'The PDF could not be added.')
+    } finally {
+      setBusy(false)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    void addFile(event.currentTarget.files?.[0])
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    setDragging(false)
+    void addFile(event.dataTransfer.files[0])
+  }
+
+  async function removeBook(book: DocumentRecord) {
+    if (!window.confirm(`Remove “${book.title}” and its locally stored pages?`)) return
+    await database.transaction('rw', database.documents, database.pages, database.conversations, database.messages, async () => {
+      await database.documents.delete(book.id)
+      await database.pages.where('documentId').equals(book.id).delete()
+      await database.conversations.delete(book.id)
+      await database.messages.where('documentId').equals(book.id).delete()
+    })
+    setMessage(`“${book.title}” was removed from this device.`)
+  }
+
+  return (
+    <section className="books-page" aria-labelledby="books-title">
+      <header className="books-header">
+        <div>
+          <p className="eyebrow">Your collection</p>
+          <h1 id="books-title">Library</h1>
+          <p className="books-intro">PDFs are read and stored in this browser. The original file is not uploaded to the server.</p>
+        </div>
+        <button className="primary-button" type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
+          {busy ? <LoaderCircle className="spin" size={17} /> : <FilePlus2 size={17} />}
+          {busy ? 'Adding PDF' : 'Add a book'}
+        </button>
+        <input ref={inputRef} className="visually-hidden" type="file" accept="application/pdf,.pdf" onChange={handleFileChange} aria-label="Choose a PDF book" />
+      </header>
+
+      <div
+        className={`upload-zone${dragging ? ' is-dragging' : ''}`}
+        onDragOver={(event) => { event.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+      >
+        <span className="upload-symbol"><FilePlus2 size={21} /></span>
+        <div>
+          <strong>Drop a PDF here</strong>
+          <span> or <button type="button" className="text-button" onClick={() => inputRef.current?.click()}>browse files</button></span>
+          <p>Text extraction happens locally in your browser.</p>
+        </div>
+      </div>
+
+      {message && <p className="status-message" role="status">{message}</p>}
+      {error && <p className="error-message" role="alert">{error}</p>}
+
+      <div className="books-list-heading">
+        <h2>Your books</h2>
+        <span>{books.length} {books.length === 1 ? 'book' : 'books'}</span>
+      </div>
+
+      {books.length === 0 ? (
+        <div className="books-empty">
+          <BookOpen size={26} strokeWidth={1.4} />
+          <h3>Your first book starts here</h3>
+          <p>Add a selectable-text PDF to read it and ask questions about its contents.</p>
+        </div>
+      ) : (
+        <ul className="book-list">
+          {books.map((book) => (
+            <li className="book-row" key={book.id}>
+              <span className="book-file-icon"><FileText size={19} /></span>
+              <Link className="book-link" to={`/book/${book.id}`}>
+                <strong>{book.title}</strong>
+                <span>{book.author || book.fileName} · {book.pageCount} pages · {formatSize(book.fileSize)}</span>
+              </Link>
+              <button className="icon-button" type="button" aria-label={`Remove ${book.title}`} title="Remove book" onClick={() => void removeBook(book)}>
+                <Trash2 size={17} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+/** Index of the entry the reader is currently inside (the last one that starts on or before this page). */
+function findActiveIndex(items: OutlineItem[], pageNumber: number): number {
+  let active = -1
+
+  items.forEach((item, index) => {
+    if (item.pageNumber !== null && item.pageNumber <= pageNumber) active = index
+  })
+
+  return active
+}
+
+function OutlineList({
+  items,
+  activeIndex,
+  onSelect,
+}: {
+  items: OutlineItem[]
+  activeIndex: number
+  onSelect: (page: number) => void
+}) {
+  return (
+    <ul className="outline-list">
+      {items.map((item, index) => {
+        const page = item.pageNumber
+
+        return (
+          <li key={index} style={{ paddingLeft: `${Math.min(item.depth, 4) * 12}px` }}>
+            <button
+              type="button"
+              disabled={page === null}
+              className={index === activeIndex ? 'selected' : ''}
+              title={page === null ? item.title : `${item.title} (page ${page})`}
+              onClick={() => { if (page !== null) onSelect(page) }}
+            >
+              {item.title}
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+export function ReaderPage() {
+  const { id } = useParams()
+  const [book, setBook] = useState<DocumentRecord | null>(null)
+  const [pages, setPages] = useState<PageRecord[]>([])
+  const [pageNumber, setPageNumber] = useState(1)
+  const [missing, setMissing] = useState(false)
+
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+
+    void Promise.all([
+      database.documents.get(id),
+      database.pages.where('documentId').equals(id).sortBy('pageNumber'),
+    ]).then(([record, records]) => {
+      if (cancelled) return
+      if (!record) {
+        setMissing(true)
+        return
+      }
+      setBook(record)
+      setPages(records)
+      void database.documents.update(id, { lastReadAt: new Date() })
+
+      // Books saved without chapters (or with an empty list by an older version):
+      // build the outline once from the stored PDF, then remember the result.
+      const stored: StoredBook = record
+      const outdated =
+        stored.outlineVersion !== OUTLINE_VERSION &&
+        (stored.outline?.length === 0 || typeof stored.outline?.[0]?.depth !== 'number')
+      const needsOutline = !stored.outline || outdated
+
+      if (needsOutline && stored.pdf) {
+        const pageTexts = records.map((page) => page.text)
+
+        void import('./pdfImport')
+          .then(({ extractOutlineFromFile }) => extractOutlineFromFile(stored.pdf as Blob, pageTexts))
+          .then(async (outline) => {
+            const patch: Partial<StoredBook> = { outline, outlineVersion: OUTLINE_VERSION }
+            await database.documents.update(id, patch)
+            if (!cancelled) setBook((current) => (current ? { ...current, outline } : current))
+          })
+          .catch(() => {
+            /* Leave it as is; the next visit tries again. */
+          })
+      }
+    })
+
+    return () => { cancelled = true }
+  }, [id])
+
+  const outline = book?.outline
+  const hasOutline = Boolean(outline && outline.length > 0 && typeof outline[0].depth === 'number')
+  const activeIndex = useMemo(
+    () => (outline ? findActiveIndex(outline, pageNumber) : -1),
+    [outline, pageNumber],
+  )
+
+  if (missing) {
+    return <section className="reader-loading"><p>This book is no longer in your local library.</p><Link to="/library">Return to library</Link></section>
+  }
+
+  if (!book) {
+    return <section className="reader-loading"><LoaderCircle className="spin" size={20} /><p>Opening your book...</p></section>
+  }
+
+  const currentPage = pages.find((page) => page.pageNumber === pageNumber)
+
+  return (
+    <section className="reader-page">
+      <header className="reader-header">
+        <Link to="/library" className="back-link">← Library</Link>
+        <div><h1>{book.title}</h1><span>{book.author || `${book.pageCount} pages`}</span></div>
+      </header>
+      <div className="reader-layout">
+        <nav className="page-rail" aria-label={hasOutline ? 'Chapters' : 'Book pages'}>
+          <p>{hasOutline ? 'Chapters' : 'Pages'}</p>
+          {hasOutline && outline ? (
+            <OutlineList items={outline} activeIndex={activeIndex} onSelect={setPageNumber} />
+          ) : (
+            pages.map((page) => (
+              <button key={page.pageNumber} type="button" className={page.pageNumber === pageNumber ? 'selected' : ''} onClick={() => setPageNumber(page.pageNumber)}>
+                {page.pageNumber}
+              </button>
+            ))
+          )}
+        </nav>
+        <article className="reader-sheet" aria-label={`Page ${pageNumber}`}>
+          <div className="page-kicker">{book.title} <span>·</span> {pageNumber}</div>
+          {currentPage?.text ? <p className="page-text">{currentPage.text}</p> : <p className="page-no-text">No selectable text was extracted from this page.</p>}
+          <div className="page-controls">
+            <button type="button" disabled={pageNumber <= 1} onClick={() => setPageNumber((number) => number - 1)}>Previous</button>
+            <span>Page {pageNumber} of {book.pageCount}</span>
+            <button type="button" disabled={pageNumber >= book.pageCount} onClick={() => setPageNumber((number) => number + 1)}>Next</button>
+          </div>
+        </article>
+        <BookChatPanel book={book} pages={pages} onCitationClick={setPageNumber} />
+      </div>
+    </section>
+  )
+}
+
+
+========================================
+FILE: .\frontend\src\features\notes\NotesPage.tsx
+========================================
+
+import { useCallback, useEffect, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
+import {
+  BookOpen,
+  Globe,
+  LockKeyhole,
+  Plus,
+  Trash2,
+  Users,
+} from 'lucide-react'
+
+import { database } from '../../db/database'
+
+import {
+  ACCOUNT_CHANGED_EVENT,
+  API_URL,
+  getCurrentAccount,
+  type Account,
+} from '../account/accountApi'
+
+interface CommunityNote {
+  id: string
+  book_title: string
+  content: string
+  nickname: string
+  username: string
+  created_at: string
+  updated_at: string
+  is_published: boolean
+  is_owner: boolean
+}
+
+interface ApiError {
+  detail?: string | { message?: string }
+}
+
+interface ChapterOption {
+  title: string
+  pageNumber: number | null
+  depth: number
+}
+
+async function getErrorMessage(
+  response: Response,
+): Promise<string> {
+  try {
+    const result = (await response.json()) as ApiError
+
+    if (typeof result.detail === 'string') {
+      return result.detail
+    }
+
+    if (
+      result.detail &&
+      typeof result.detail.message === 'string'
+    ) {
+      return result.detail.message
+    }
+  } catch {
+    // Ignore responses that are not JSON.
+  }
+
+  return `The request failed (${response.status}).`
+}
+
+/**
+ * Detect chapter headings in extracted PDF text.
+ *
+ * This is a fallback for PDFs without usable bookmarks.
+ */
+function detectChaptersFromPages(
+  pages: Array<{ pageNumber: number; text: string }>,
+): ChapterOption[] {
+  const found: ChapterOption[] = []
+  const seen = new Set<string>()
+
+  const chapterPattern =
+    /\bchapter\s+(\d{1,3}|[ivxlcdm]{1,8}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\b/gi
+
+  for (const page of [...pages].sort(
+    (a, b) => a.pageNumber - b.pageNumber,
+  )) {
+    const text = page.text.replace(/\s+/g, ' ')
+
+    chapterPattern.lastIndex = 0
+
+    let match: RegExpExecArray | null
+
+    while ((match = chapterPattern.exec(text)) !== null) {
+      const numberOrWord = match[1]
+      const title = `Chapter ${numberOrWord}`
+      const key = title.toLocaleLowerCase()
+
+      if (!seen.has(key)) {
+        seen.add(key)
+
+        found.push({
+          title,
+          pageNumber: page.pageNumber,
+          depth: 0,
+        })
+      }
+
+      // Prevent a pathological zero-length regex loop.
+      if (chapterPattern.lastIndex === match.index) {
+        chapterPattern.lastIndex++
+      }
+    }
+  }
+
+  return found
+}
+
+export function NotesPage() {
+  const [isCreating, setIsCreating] = useState(false)
+
+  const [selectedBookId, setSelectedBookId] = useState('')
+  const [selectedChapterIndex, setSelectedChapterIndex] =
+    useState('')
+
+  const [manualChapterTitle, setManualChapterTitle] =
+    useState('')
+
+  const [manualChapterPage, setManualChapterPage] =
+    useState('1')
+
+  const [content, setContent] = useState('')
+
+  const [account, setAccount] = useState<Account | null>(null)
+  const [accountLoading, setAccountLoading] = useState(true)
+
+  const [communityNotes, setCommunityNotes] = useState<
+    CommunityNote[]
+  >([])
+
+  const [communityLoading, setCommunityLoading] =
+    useState(false)
+
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+
+  /*
+   * Load books and notes from IndexedDB.
+   *
+   * useLiveQuery keeps the component updated when the
+   * corresponding Dexie tables change.
+   */
+  const books = useLiveQuery(
+    () => database.documents.orderBy('title').toArray(),
+    [],
+  )
+
+  const notes = useLiveQuery(
+    () =>
+      database.notes
+        .orderBy('updatedAt')
+        .reverse()
+        .toArray(),
+    [],
+  )
+
+  /*
+   * The queries can initially return undefined.
+   * These fallback arrays make rendering and array
+   * operations safe while IndexedDB loads.
+   */
+  const bookList = books ?? []
+  const noteList = notes ?? []
+
+  const selectedBook = bookList.find(
+    book => book.id === selectedBookId,
+  )
+
+  /*
+   * Load the selected book's pages.
+   */
+const selectedBookPages =
+  useLiveQuery(
+    () =>
+      selectedBookId
+        ? database.pages
+            .where('documentId')
+            .equals(selectedBookId)
+            .sortBy('pageNumber')
+        : database.pages
+            .toCollection()
+            .limit(0)
+            .toArray(),
+    [selectedBookId],
+  ) ?? []
+
+  /*
+   * Prefer the PDF's stored outline when it contains
+   * chapters with page numbers.
+   *
+   * Otherwise, detect chapter headings from extracted text.
+   */
+  const bookmarkedChapters =
+    selectedBook?.outline?.filter(
+      chapter => chapter.pageNumber !== null,
+    ) ?? []
+
+  const detectedChapters =
+    detectChaptersFromPages(selectedBookPages)
+
+  const chapters =
+    bookmarkedChapters.length > 0
+      ? bookmarkedChapters
+      : detectedChapters
+
+  /*
+   * Resolve the selected chapter.
+   *
+   * The manual option allows the reader to enter a chapter
+   * even when automatic chapter detection succeeds.
+   */
+  const selectedChapter =
+    selectedChapterIndex === 'manual'
+      ? manualChapterTitle.trim()
+        ? {
+            title: manualChapterTitle.trim(),
+            pageNumber: Math.max(
+              1,
+              Number.parseInt(manualChapterPage, 10) || 1,
+            ),
+            depth: 0,
+          }
+        : undefined
+      : selectedChapterIndex !== ''
+        ? chapters[Number(selectedChapterIndex)]
+        : undefined
+
+  /*
+   * Load community notes for the signed-in account.
+   */
+  const loadCommunityNotes = useCallback(async () => {
+    if (accountLoading) {
+      return
+    }
+
+    if (!account) {
+      setCommunityNotes([])
+      setCommunityLoading(false)
+      return
+    }
+
+    setCommunityLoading(true)
+
+    try {
+      const response = await fetch(
+        `${API_URL}/publications/community`,
+        {
+          method: 'GET',
+          credentials: 'include',
+        },
+      )
+
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response))
+      }
+
+      const result =
+        (await response.json()) as CommunityNote[]
+
+      setCommunityNotes(result)
+      setError('')
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Could not load community notes.',
+      )
+    } finally {
+      setCommunityLoading(false)
+    }
+  }, [account, accountLoading])
+
+  /*
+   * Load the current account and listen for authentication
+   * changes elsewhere in the application.
+   */
+  useEffect(() => {
+    let active = true
+    let accountChangedDuringLoad = false
+
+    async function loadAccount() {
+      try {
+        const result = await getCurrentAccount()
+
+        if (active && !accountChangedDuringLoad) {
+          setAccount(result)
+        }
+      } catch (err) {
+        if (active && !accountChangedDuringLoad) {
+          setAccount(null)
+
+          console.error(
+            'Could not load the current account:',
+            err,
+          )
+        }
+      } finally {
+        if (active) {
+          setAccountLoading(false)
+        }
+      }
+    }
+
+    function handleAccountChanged(event: Event) {
+      const customEvent =
+        event as CustomEvent<Account | null>
+
+      accountChangedDuringLoad = true
+
+      setAccount(customEvent.detail)
+      setAccountLoading(false)
+      setError('')
+      setMessage('')
+    }
+
+    window.addEventListener(
+      ACCOUNT_CHANGED_EVENT,
+      handleAccountChanged,
+    )
+
+    void loadAccount()
+
+    return () => {
+      active = false
+
+      window.removeEventListener(
+        ACCOUNT_CHANGED_EVENT,
+        handleAccountChanged,
+      )
+    }
+  }, [])
+
+  /*
+   * Load community notes after the account check completes.
+   */
+  useEffect(() => {
+    if (accountLoading) {
+      return
+    }
+
+    void loadCommunityNotes()
+  }, [account, accountLoading, loadCommunityNotes])
+
+  /*
+   * Create a new private note in IndexedDB.
+   */
+  async function createNote() {
+    const text = content.trim()
+
+    if (!selectedBookId || !selectedChapter || !text) {
+      setError(
+        'Select a book, select a chapter, and write a note.',
+      )
+      return
+    }
+
+    setError('')
+    setMessage('')
+    setSaving(true)
+
+    try {
+      const book = await database.documents.get(
+        selectedBookId,
+      )
+
+      if (!book) {
+        setError('The selected book could not be found.')
+        return
+      }
+
+      const now = new Date()
+
+      await database.notes.add({
+        id: crypto.randomUUID(),
+        documentId: book.id,
+        bookTitle: book.title,
+        chapterTitle: selectedChapter.title,
+        chapterPageNumber: selectedChapter.pageNumber,
+        content: text,
+        authorName: account?.display_name ?? null,
+        createdAt: now,
+        updatedAt: now,
+        isPublished: false,
+      })
+
+      setContent('')
+      setSelectedBookId('')
+      setSelectedChapterIndex('')
+      setManualChapterTitle('')
+      setManualChapterPage('1')
+      setIsCreating(false)
+
+      setMessage(
+        `Your note about "${selectedChapter.title}" was saved privately.`,
+      )
+    } catch (err) {
+      console.error('Could not save the note:', err)
+      setError('Could not save your note.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /*
+   * Publish a private note or make a published note private.
+   */
+  async function togglePublished(
+    noteId: string,
+    published: boolean,
+  ) {
+    setError('')
+    setMessage('')
+
+    if (accountLoading) {
+      setError(
+        'Please wait while we check your sign-in session.',
+      )
+      return
+    }
+
+    if (!account) {
+      setError('Please sign in before publishing a note.')
+      return
+    }
+
+    if (!noteId) {
+      setError('The selected note could not be found.')
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const note = await database.notes.get(noteId)
+
+      if (!note) {
+        throw new Error('The note could not be found.')
+      }
+
+      if (published) {
+        /*
+         * Gather the selected book's extracted text
+         * for the backend copyright check.
+         */
+        const pages = await database.pages
+          .where('documentId')
+          .equals(note.documentId)
+          .toArray()
+
+        const sourceText = pages
+          .sort((a, b) => a.pageNumber - b.pageNumber)
+          .map(page => page.text.trim())
+          .filter(Boolean)
+          .join('\n\n')
+
+        if (!sourceText.trim()) {
+          throw new Error(
+            'This book has no extracted text for copyright checking. ' +
+              'Import a text-based PDF before publishing this note.',
+          )
+        }
+
+        const response = await fetch(
+          `${API_URL}/publications/community`,
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              book_title: note.bookTitle,
+              content: note.content,
+              source_text: sourceText,
+            }),
+          },
+        )
+
+        if (!response.ok) {
+          throw new Error(await getErrorMessage(response))
+        }
+
+        const publishedNote =
+          (await response.json()) as CommunityNote
+
+        await database.notes.update(noteId, {
+          isPublished: true,
+          authorName: publishedNote.nickname,
+          updatedAt: new Date(),
+        })
+
+        setMessage(
+          'Your note was published to the community.',
+        )
+      } else {
+        /*
+         * Find the corresponding community note owned
+         * by the current user.
+         */
+        const communityNote = communityNotes.find(
+          item =>
+            item.is_owner &&
+            item.book_title === note.bookTitle &&
+            item.content === note.content,
+        )
+
+        if (!communityNote) {
+          throw new Error(
+            'Could not find the published community note. ' +
+              'Refresh the community list and try again.',
+          )
+        }
+
+        const response = await fetch(
+          `${API_URL}/publications/community/${communityNote.id}`,
+          {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              is_published: false,
+            }),
+          },
+        )
+
+        if (!response.ok) {
+          throw new Error(await getErrorMessage(response))
+        }
+
+        await database.notes.update(noteId, {
+          isPublished: false,
+          updatedAt: new Date(),
+        })
+
+        setMessage('Your note is now private.')
+      }
+
+      await loadCommunityNotes()
+    } catch (err) {
+      console.error('Could not update the note:', err)
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Could not update the note.',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /*
+   * Delete a private note from IndexedDB.
+   */
+  async function deleteNote(noteId: string) {
+    setError('')
+    setMessage('')
+
+    try {
+      const note = await database.notes.get(noteId)
+
+      if (!note) {
+        setError('The note could not be found.')
+        return
+      }
+
+      if (note.isPublished) {
+        setError(
+          'Make the note private before deleting it.',
+        )
+        return
+      }
+
+      await database.notes.delete(noteId)
+
+      setMessage('Your note was deleted.')
+    } catch (err) {
+      console.error('Could not delete the note:', err)
+      setError('Could not delete your note.')
+    }
+  }
+
+  /*
+   * Delete a community note owned by the current user.
+   */
+  async function deleteCommunityNote(
+    communityNote: CommunityNote,
+  ) {
+    if (!communityNote.is_owner) {
+      return
+    }
+
+    setError('')
+    setMessage('')
+
+    try {
+      const response = await fetch(
+        `${API_URL}/publications/community/${communityNote.id}`,
+        {
+          method: 'DELETE',
+          credentials: 'include',
+        },
+      )
+
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response))
+      }
+
+      const matchingNotes = noteList.filter(
+        note =>
+          note.isPublished &&
+          note.bookTitle === communityNote.book_title &&
+          note.content === communityNote.content,
+      )
+
+      for (const note of matchingNotes) {
+        await database.notes.update(note.id, {
+          isPublished: false,
+          updatedAt: new Date(),
+        })
+      }
+
+      setCommunityNotes(current =>
+        current.filter(
+          note => note.id !== communityNote.id,
+        ),
+      )
+
+      setMessage('Your community note was deleted.')
+    } catch (err) {
+      console.error(
+        'Could not delete the community note:',
+        err,
+      )
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Could not delete the community note.',
+      )
+    }
+  }
+
+  return (
+    <section className="notes-page">
+      <header className="notes-page-header">
+        <div>
+          <p className="eyebrow">Reading memory</p>
+
+          <h1>Your notes</h1>
+
+          <p className="notes-description">
+            Capture your thoughts and observations
+            about the books you read.
+          </p>
+        </div>
+
+        {!isCreating && (
+          <button
+            type="button"
+            className="notes-new-button"
+            onClick={() => {
+              setError('')
+              setMessage('')
+              setIsCreating(true)
+            }}
+          >
+            <Plus size={17} />
+            New note
+          </button>
+        )}
+      </header>
+
+      {error && (
+        <div
+          role="alert"
+          className="notes-message notes-error"
+        >
+          {error}
+        </div>
+      )}
+
+      {message && (
+        <div
+          role="status"
+          className="notes-message notes-success"
+        >
+          {message}
+        </div>
+      )}
+
+      {isCreating && (
+        <section className="note-editor">
+          <div className="note-editor-title">
+            <h2>New note</h2>
+
+            <p>
+              Write your own thoughts about a book.
+            </p>
+          </div>
+
+          <div className="note-form">
+            <label>
+              <span>Book</span>
+
+              <select
+                value={selectedBookId}
+                onChange={event => {
+                  setSelectedBookId(event.target.value)
+                  setSelectedChapterIndex('')
+                  setManualChapterTitle('')
+                  setManualChapterPage('1')
+                  setError('')
+                  setMessage('')
+                }}
+                required
+              >
+                <option value="">Select a book</option>
+
+                {bookList.map(book => (
+                  <option key={book.id} value={book.id}>
+                    {book.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="chapter-field">
+              <label>
+                <span>Chapter</span>
+
+                <select
+                  value={selectedChapterIndex}
+                  onChange={event => {
+                    setSelectedChapterIndex(
+                      event.target.value,
+                    )
+                    setError('')
+                    setMessage('')
+                  }}
+                  disabled={!selectedBookId}
+                  required
+                >
+                  <option value="">
+                    {!selectedBookId
+                      ? 'Select a book first'
+                      : chapters.length === 0
+                        ? 'No chapter headings detected'
+                        : 'Select a chapter'}
+                  </option>
+
+                  {chapters.map((chapter, index) => (
+                    <option
+                      key={`${chapter.title}-${index}`}
+                      value={index}
+                    >
+                      {chapter.title} — page{' '}
+                      {chapter.pageNumber ?? 'unknown'}
+                    </option>
+                  ))}
+
+                  {selectedBookId && (
+                    <option value="manual">
+                      Enter chapter manually
+                    </option>
+                  )}
+                </select>
+              </label>
+
+              {selectedChapterIndex === 'manual' && (
+                <div className="manual-chapter-fields">
+                  <label>
+                    <span>Chapter title</span>
+
+                    <input
+                      type="text"
+                      value={manualChapterTitle}
+                      onChange={event =>
+                        setManualChapterTitle(
+                          event.target.value,
+                        )
+                      }
+                      placeholder="e.g. Chapter 1 — Introduction"
+                      required
+                    />
+                  </label>
+
+                  <label>
+                    <span>Starting page</span>
+
+                    <input
+                      type="number"
+                      min="1"
+                      max={
+                        selectedBook?.pageCount ?? undefined
+                      }
+                      value={manualChapterPage}
+                      onChange={event =>
+                        setManualChapterPage(
+                          event.target.value,
+                        )
+                      }
+                      required
+                    />
+                  </label>
+                </div>
+              )}
+
+              {selectedBookId &&
+                chapters.length === 0 && (
+                  <small>
+                    The app checks PDF bookmarks and extracted
+                    text for headings such as “Chapter 1”.
+                    If it cannot find any, enter the chapter
+                    title and its starting page manually.
+                  </small>
+                )}
+            </div>
+
+            <label>
+              <span>Your note</span>
+
+              <textarea
+                value={content}
+                onChange={event =>
+                  setContent(event.target.value)
+                }
+                placeholder="What did you think about this book?"
+                rows={7}
+              />
+            </label>
+          </div>
+
+          <div className="note-editor-footer">
+            <p>
+              New notes are private. You can publish them later.
+            </p>
+
+            <div>
+              <button
+                type="button"
+                className="note-cancel"
+                onClick={() => {
+                  setIsCreating(false)
+                  setSelectedBookId('')
+                  setSelectedChapterIndex('')
+                  setManualChapterTitle('')
+                  setManualChapterPage('1')
+                  setContent('')
+                  setError('')
+                  setMessage('')
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="note-save"
+                disabled={
+                  saving ||
+                  !selectedBookId ||
+                  !selectedChapter ||
+                  !content.trim()
+                }
+                onClick={() => void createNote()}
+              >
+                Save note
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {!isCreating && (
+        <>
+          <section className="notes-section">
+            <div className="notes-section-header">
+              <div>
+                <p className="eyebrow">Your writing</p>
+
+                <h2>
+                  {noteList.length === 0
+                    ? 'No notes yet'
+                    : `${noteList.length} ${
+                        noteList.length === 1
+                          ? 'note'
+                          : 'notes'
+                      }`}
+                </h2>
+              </div>
+            </div>
+
+            {noteList.length === 0 ? (
+              <div className="notes-empty">
+                <BookOpen
+                  size={24}
+                  strokeWidth={1.5}
+                />
+
+                <div>
+                  <h3>Start your reading memory</h3>
+
+                  <p>
+                    Write your first note about something
+                    you read.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="notes-list">
+                {noteList.map(note => (
+                  <article
+                    key={note.id}
+                    className="note-card"
+                  >
+                    <div className="note-card-book">
+                      <BookOpen
+                        size={17}
+                        strokeWidth={1.7}
+                      />
+
+                      <span>{note.bookTitle}</span>
+                    </div>
+
+                    {note.chapterTitle && (
+                      <p className="note-card-chapter">
+                        <strong>Chapter:</strong>{' '}
+                        {note.chapterTitle}
+
+                        {note.chapterPageNumber != null && (
+                          <>
+                            {' '}
+                            · Page {note.chapterPageNumber}
+                          </>
+                        )}
+                      </p>
+                    )}
+
+                    <p className="note-card-content">
+                      {note.content}
+                    </p>
+
+                    {note.authorName && (
+                      <p className="note-author">
+                        By {note.authorName}
+                      </p>
+                    )}
+
+                    <div className="note-card-footer">
+                      <span
+                        className={
+                          note.isPublished
+                            ? 'note-status published'
+                            : 'note-status private'
+                        }
+                      >
+                        {note.isPublished ? (
+                          <>
+                            <Globe size={13} />
+                            Published
+                          </>
+                        ) : (
+                          <>
+                            <LockKeyhole size={13} />
+                            Private
+                          </>
+                        )}
+                      </span>
+
+                      <div className="note-actions">
+                        <button
+                          type="button"
+                          disabled={
+                            saving ||
+                            accountLoading ||
+                            !account
+                          }
+                          onClick={() =>
+                            void togglePublished(
+                              note.id,
+                              !note.isPublished,
+                            )
+                          }
+                        >
+                          {note.isPublished
+                            ? 'Make private'
+                            : 'Publish'}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="note-delete"
+                          aria-label="Delete note"
+                          disabled={saving}
+                          onClick={() =>
+                            void deleteNote(note.id)
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="notes-section">
+            <div className="notes-section-header">
+              <div>
+                <p className="eyebrow">Shared reading</p>
+
+                <h2>
+                  <Users
+                    size={19}
+                    style={{
+                      display: 'inline',
+                      verticalAlign: 'middle',
+                      marginRight: 8,
+                    }}
+                  />
+                  Community notes
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadCommunityNotes()
+                }
+                disabled={
+                  communityLoading ||
+                  accountLoading ||
+                  !account
+                }
+              >
+                Refresh
+              </button>
+            </div>
+
+            {accountLoading ? (
+              <p>Checking your sign-in session...</p>
+            ) : !account ? (
+              <p>
+                Sign in to see notes shared by other readers.
+              </p>
+            ) : communityLoading ? (
+              <p>Loading community notes...</p>
+            ) : communityNotes.length === 0 ? (
+              <div className="notes-empty">
+                <Users
+                  size={24}
+                  strokeWidth={1.5}
+                />
+
+                <div>
+                  <h3>No published notes yet</h3>
+
+                  <p>
+                    Publish one of your notes to start
+                    the community.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="notes-list">
+                {communityNotes.map(note => (
+                  <article
+                    key={note.id}
+                    className="note-card"
+                  >
+                    <div className="note-card-book">
+                      <BookOpen size={17} />
+
+                      <span>{note.book_title}</span>
+                    </div>
+
+                    <p className="note-author">
+                      By {note.nickname} (@{note.username})
+                    </p>
+
+                    <p className="note-card-content">
+                      {note.content}
+                    </p>
+
+                    <div className="note-card-footer">
+                      <span className="note-status published">
+                        <Globe size={13} />
+                        Published
+                      </span>
+
+                      {note.is_owner && (
+                        <div className="note-actions">
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => {
+                              const localNote = noteList.find(
+                                item =>
+                                  item.isPublished &&
+                                  item.bookTitle ===
+                                    note.book_title &&
+                                  item.content ===
+                                    note.content,
+                              )
+
+                              if (localNote) {
+                                void togglePublished(
+                                  localNote.id,
+                                  false,
+                                )
+                              } else {
+                                setError(
+                                  'This community note does not match a local note. ' +
+                                    'Refresh the page and try again.',
+                                )
+                              }
+                            }}
+                          >
+                            Make private
+                          </button>
+
+                          <button
+                            type="button"
+                            className="note-delete"
+                            aria-label="Delete community note"
+                            disabled={saving}
+                            onClick={() =>
+                              void deleteCommunityNote(note)
+                            }
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      )}
+    </section>
+  )
+}
+
+
+
+========================================
+FILE: .\frontend\src\features\books\pdfImport.ts
+========================================
+
+import {
+  getDocument,
+  GlobalWorkerOptions,
+  type PDFDocumentLoadingTask,
+  type PDFDocumentProxy,
+  type PDFPageProxy,
+} from 'pdfjs-dist'
+
+import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+
+import {
+  database,
+  type DocumentRecord,
+  type OutlineItem,
+  type PageRecord,
+} from '../../db/database'
+
+import { indexDocument } from '../memory/memoryIndexer'
+import {
+  indexDocumentEmbeddings,
+  type EmbeddingProgress,
+} from '../memory/embeddingIndexer'
+import {
+  OUTLINE_VERSION,
+  buildOutlineFromPrintedToc,
+  findTocPages,
+} from './tocParser'
+
+GlobalWorkerOptions.workerSrc = workerUrl
+
+export interface PdfImportProgress {
+  stage:
+    | 'extracting'
+    | 'saving'
+    | 'chunking'
+    | 'embedding'
+  current?: number
+  total?: number
+}
+
+export interface PdfImportResult {
+  document: DocumentRecord
+  extractedCharacters: number
+  scanned: boolean
+  chunksCreated: number
+  embeddingsCreated: number
+}
+
+interface RawOutlineNode {
+  title?: string
+  dest?: string | unknown[] | null
+  items?: RawOutlineNode[]
+}
+
+type PageRef = Parameters<PDFDocumentProxy['getPageIndex']>[0]
+
+async function resolvePageNumber(
+  pdf: PDFDocumentProxy,
+  dest: string | unknown[] | null | undefined,
+): Promise<number | null> {
+  try {
+    if (!dest) return null
+
+    const explicit =
+      typeof dest === 'string'
+        ? await pdf.getDestination(dest)
+        : dest
+
+    if (!Array.isArray(explicit)) return null
+
+    const target = explicit[0]
+
+    if (typeof target === 'number') return target + 1
+
+    return (await pdf.getPageIndex(target as PageRef)) + 1
+  } catch {
+    return null
+  }
+}
+
+/** Bookmarks stored inside the PDF itself (what a viewer's side panel shows). */
+async function extractEmbeddedOutline(
+  pdf: PDFDocumentProxy,
+): Promise<OutlineItem[]> {
+  const raw = (await pdf.getOutline()) as RawOutlineNode[] | null
+
+  if (!raw) return []
+
+  const list: OutlineItem[] = []
+
+  const walk = async (nodes: RawOutlineNode[], depth: number) => {
+    for (const node of nodes) {
+      list.push({
+        title: String(node.title ?? '').trim() || 'Untitled',
+        pageNumber: await resolvePageNumber(pdf, node.dest),
+        depth,
+      })
+      await walk(node.items ?? [], depth + 1)
+    }
+  }
+
+  await walk(raw, 0)
+  return list
+}
+
+function countLinked(items: OutlineItem[]): number {
+  return items.filter((item) => item.pageNumber !== null).length
+}
+
+interface PositionedText {
+  str: string
+  transform: number[]
+}
+
+/** Text of one page as visual lines (title and page number stay together). */
+async function getPageLines(page: PDFPageProxy): Promise<string[]> {
+  const content = await page.getTextContent()
+
+  const items = (content.items as unknown[])
+    .filter(
+      (item): item is PositionedText =>
+        typeof item === 'object' &&
+        item !== null &&
+        'str' in item &&
+        'transform' in item,
+    )
+    .map((item) => ({
+      text: item.str,
+      x: item.transform[4],
+      y: item.transform[5],
+    }))
+    .filter((item) => item.text.trim().length > 0)
+    .sort((a, b) => b.y - a.y)
+
+  const lines: Array<{ y: number; items: typeof items }> = []
+
+  for (const item of items) {
+    const last = lines[lines.length - 1]
+    if (last && Math.abs(last.y - item.y) <= 3) last.items.push(item)
+    else lines.push({ y: item.y, items: [item] })
+  }
+
+  return lines.map((line) =>
+    line.items
+      .sort((a, b) => a.x - b.x)
+      .map((item) => item.text.trim())
+      .filter(Boolean)
+      .join(' '),
+  )
+}
+
+/** For books without bookmarks: read the printed "Table of Contents" pages. */
+async function extractPrintedOutline(
+  pdf: PDFDocumentProxy,
+  pageTexts: string[],
+): Promise<OutlineItem[]> {
+  const tocPages = findTocPages(pageTexts)
+  if (tocPages.length === 0) return []
+
+  const lines: string[] = []
+
+  for (const index of tocPages) {
+    const page = await pdf.getPage(index + 1)
+    lines.push(...(await getPageLines(page)))
+    page.cleanup()
+  }
+
+  return buildOutlineFromPrintedToc(lines, pageTexts, tocPages)
+}
+
+/**
+ * Chapters for the reader's left column. Uses the PDF's own bookmarks when
+ * there are any, otherwise the printed table of contents (needs `pageTexts`,
+ * the extracted text of every page in order).
+ */
+export async function extractOutline(
+  pdf: PDFDocumentProxy,
+  pageTexts?: string[],
+): Promise<OutlineItem[]> {
+  const embedded = await extractEmbeddedOutline(pdf).catch(
+    () => [] as OutlineItem[],
+  )
+
+  if (!pageTexts || countLinked(embedded) >= 5) return embedded
+
+  const printed = await extractPrintedOutline(pdf, pageTexts).catch(
+    () => [] as OutlineItem[],
+  )
+
+  return countLinked(printed) > countLinked(embedded) ? printed : embedded
+}
+
+export async function extractOutlineFromFile(
+  file: Blob,
+  pageTexts?: string[],
+): Promise<OutlineItem[]> {
+  const loadingTask = getDocument({
+    data: await file.arrayBuffer(),
+  })
+
+  try {
+    const pdf = await loadingTask.promise
+    return await extractOutline(pdf, pageTexts)
+  } finally {
+    await loadingTask.destroy()
+  }
+}
+
+export async function importPdf(
+  file: File,
+  onProgress?: (
+    progress: PdfImportProgress,
+  ) => void,
+): Promise<PdfImportResult> {
+  if (
+    file.type !== 'application/pdf' &&
+    !file.name.toLowerCase().endsWith('.pdf')
+  ) {
+    throw new Error(
+      'Choose a PDF file to add it to your library.',
+    )
+  }
+
+  if (file.size === 0) {
+    throw new Error(
+      'This file is empty and cannot be read.',
+    )
+  }
+
+  let pdf: PDFDocumentProxy | undefined
+
+  let loadingTask:
+    | PDFDocumentLoadingTask
+    | undefined
+
+  try {
+    onProgress?.({
+      stage: 'extracting',
+    })
+
+    loadingTask = getDocument({
+      data: await file.arrayBuffer(),
+    })
+
+    pdf = await loadingTask.promise
+
+    const metadata =
+      await pdf.getMetadata()
+
+    const info =
+      metadata.info as {
+        Title?: string
+        Author?: string
+      }
+
+    const documentId =
+      crypto.randomUUID()
+
+    const pages: PageRecord[] = []
+
+    let extractedCharacters = 0
+
+    for (
+      let pageNumber = 1;
+      pageNumber <= pdf.numPages;
+      pageNumber += 1
+    ) {
+      onProgress?.({
+        stage: 'extracting',
+        current: pageNumber,
+        total: pdf.numPages,
+      })
+
+      const page =
+        await pdf.getPage(pageNumber)
+
+      const content =
+        await page.getTextContent()
+
+      const text =
+        content.items
+          .filter(
+            item => 'str' in item,
+          )
+          .map(
+            item => item.str.trim(),
+          )
+          .filter(Boolean)
+          .join(' ')
+
+      extractedCharacters +=
+        text.length
+
+      pages.push({
+        id:
+          `${documentId}:${pageNumber}`,
+        documentId,
+        pageNumber,
+        text,
+      })
+
+      page.cleanup()
+    }
+
+    if (extractedCharacters === 0) {
+      throw new Error(
+        'No selectable text was found. This PDF may be scanned; OCR is not available yet.',
+      )
+    }
+
+    // A malformed outline must never break an import.
+    const outline = await extractOutline(
+      pdf,
+      pages.map((page) => page.text),
+    ).catch(() => [] as OutlineItem[])
+
+    const now = new Date()
+
+    const document: DocumentRecord & { outlineVersion?: number } = {
+      id: documentId,
+      title:
+        info.Title?.trim() ||
+        file.name.replace(
+          /\.pdf$/i,
+          '',
+        ),
+      author:
+        info.Author?.trim() ||
+        null,
+      fileName: file.name,
+      fileSize: file.size,
+      pageCount: pdf.numPages,
+      createdAt: now,
+      lastReadAt: null,
+      readingProgress: 0,
+      outline,
+      outlineVersion: OUTLINE_VERSION,
+      pdf: file,
+    }
+
+    onProgress?.({
+      stage: 'saving',
+    })
+
+    await database.transaction(
+      'rw',
+      database.documents,
+      database.pages,
+      async () => {
+        await database.documents.add(
+          document,
+        )
+
+        await database.pages.bulkAdd(
+          pages,
+        )
+      },
+    )
+
+    onProgress?.({
+      stage: 'chunking',
+    })
+
+    const chunksCreated =
+      await indexDocument(
+        documentId,
+      )
+
+    onProgress?.({
+      stage: 'embedding',
+      current: 0,
+      total: chunksCreated,
+    })
+
+    const embeddingsCreated =
+      await indexDocumentEmbeddings(
+        documentId,
+        (progress: EmbeddingProgress) => {
+          onProgress?.({
+            stage: 'embedding',
+            current:
+              progress.completed,
+            total:
+              progress.total,
+          })
+        },
+      )
+
+    return {
+      document,
+      extractedCharacters,
+      scanned:
+        extractedCharacters /
+          pdf.numPages <
+        30,
+      chunksCreated,
+      embeddingsCreated,
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith(
+        'No selectable text',
+      )
+    ) {
+      throw error
+    }
+
+    throw new Error(
+      'This PDF could not be opened. Check that it is a valid, unencrypted PDF.',
+    )
+  } finally {
+    await loadingTask?.destroy()
+  }
+}
+
+
+========================================
+FILE: .\frontend\src\features\chat\chatHistory.ts
+========================================
+
+import { database, type ChatMessageRecord, type StoredCitation } from '../../db/database'
+
+export async function createConversation(documentId: string): Promise<string> {
+  const now = new Date()
+  const conversationId = crypto.randomUUID()
+
+  await database.conversations.add({
+    id: conversationId,
+    documentId,
+    title: 'New conversation',
+    createdAt: now,
+    updatedAt: now,
+    nextSequence: 0,
+  })
+
+  return conversationId
+}
+
+export async function saveUserQuestion(
+  conversationId: string,
+  documentId: string,
+  bookTitle: string,
+  content: string,
+): Promise<string> {
+  const now = new Date()
+  const questionId = crypto.randomUUID()
+
+  await database.transaction('rw', database.conversations, database.messages, async () => {
+    const conversation = await database.conversations.get(conversationId)
+    if (!conversation || conversation.documentId !== documentId) {
+      throw new Error('The selected conversation could not be found for this book.')
+    }
+
+    const title = conversation.nextSequence === 0 ? content.slice(0, 72) : conversation.title
+    await database.messages.add({
+      id: questionId,
+      conversationId,
+      documentId,
+      role: 'user',
+      content,
+      citations: [],
+      createdAt: now,
+      sequence: conversation?.nextSequence ?? 0,
+      status: 'pending',
+    })
+    await database.conversations.update(conversationId, {
+      title: title || bookTitle,
+      updatedAt: now,
+      nextSequence: conversation.nextSequence + 1,
+    })
+  })
+
+  return questionId
+}
+
+export async function saveAssistantAnswer(
+  documentId: string,
+  questionId: string,
+  content: string,
+  citations: StoredCitation[],
+): Promise<void> {
+  const now = new Date()
+  await database.transaction('rw', database.conversations, database.messages, async () => {
+    const question = await database.messages.get(questionId)
+    const conversation = await database.conversations.get(question?.conversationId ?? documentId)
+    if (!question || question.role !== 'user' || question.documentId !== documentId) {
+      throw new Error('The original question could not be found in local history.')
+    }
+    if (!conversation) throw new Error('The book conversation could not be found in local history.')
+
+    await database.messages.add({
+      id: crypto.randomUUID(),
+      conversationId: question.conversationId,
+      documentId,
+      role: 'assistant',
+      content,
+      citations,
+      createdAt: now,
+      sequence: conversation.nextSequence,
+      status: 'answered',
+    })
+    await database.messages.update(questionId, { status: 'answered' })
+    await database.conversations.update(question.conversationId, {
+      updatedAt: now,
+      nextSequence: conversation.nextSequence + 1,
+    })
+  })
+}
+
+export async function saveLocalReply(documentId: string, questionId: string, content: string): Promise<void> {
+  await saveAssistantAnswer(documentId, questionId, content, [])
+}
+
+export async function markQuestionFailed(questionId: string): Promise<void> {
+  await database.messages.update(questionId, { status: 'failed' })
+}
+
+export async function markInterruptedQuestionsFailed(documentId: string): Promise<void> {
+  await database.messages
+    .where('documentId')
+    .equals(documentId)
+    .filter((message: ChatMessageRecord) => message.role === 'user' && message.status === 'pending')
+    .modify({ status: 'failed' })
+}
+
+
+
+========================================
+FILE: .\frontend\src\features\account\accountApi.ts
+========================================
+
+export interface Account {
+  id: string
+  email: string
+  username: string
+  display_name: string
+}
+
+export const ACCOUNT_CHANGED_EVENT =
+  'reading-memory-account-changed'
+
+export function notifyAccountChanged(
+  account: Account | null,
+): void {
+  window.dispatchEvent(
+    new CustomEvent<Account | null>(
+      ACCOUNT_CHANGED_EVENT,
+      { detail: account },
+    ),
+  )
+}
+
+interface Credentials {
+  email: string
+  password: string
+}
+
+interface Registration extends Credentials {
+  username: string
+  display_name: string
+}
+
+export const API_URL =
+  import.meta.env.VITE_API_URL ||
+  'https://social-books-dny1.onrender.com'
+
+const REQUEST_TIMEOUT_MS = 15000
+
+async function requestAccount(
+  path: string,
+  body?: Credentials | Registration,
+): Promise<Account | null> {
+  const controller = new AbortController()
+
+  const timeoutId = window.setTimeout(() => {
+    controller.abort()
+  }, REQUEST_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(
+      `${API_URL}/api/auth/${path}`,
+      {
+        method: path === 'me' ? 'GET' : 'POST',
+        headers: body
+          ? { 'Content-Type': 'application/json' }
+          : undefined,
+        body: body
+          ? JSON.stringify(body)
+          : undefined,
+        credentials: 'include',
+        signal: controller.signal,
+      },
+    )
+
+    if (!response.ok) {
+      let message =
+        'The account request could not be completed.'
+
+      try {
+        const result: unknown = await response.json()
+
+        if (
+          typeof result === 'object' &&
+          result !== null &&
+          'detail' in result &&
+          typeof result.detail === 'string'
+        ) {
+          message = result.detail
+        }
+      } catch {
+        // Keep the generic message if the response isn't JSON.
+      }
+
+      throw new Error(message)
+    }
+
+    if (response.status === 204) {
+      return null
+    }
+
+    return await response.json() as Account
+  } catch (cause: unknown) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        'The account server took too long to respond. Please try again.',
+      )
+    }
+
+    throw cause
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
+export const getCurrentAccount =
+  (): Promise<Account | null> =>
+    requestAccount('me')
+
+export const registerAccount =
+  (input: Registration): Promise<Account | null> =>
+    requestAccount('register', input)
+
+export const loginAccount =
+  (input: Credentials): Promise<Account | null> =>
+    requestAccount('login', input)
+
+export const logoutAccount =
+  (): Promise<Account | null> =>
+    requestAccount('logout')

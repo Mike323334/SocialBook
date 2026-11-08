@@ -281,6 +281,7 @@ def logout(response: Response) -> None:
     response.delete_cookie(
         key=session_cookie,
         path="/",
+        secure=True,
         httponly=True,
-        samesite="lax",
-    )   
+        samesite="none",
+    )

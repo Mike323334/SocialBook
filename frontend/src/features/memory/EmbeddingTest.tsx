@@ -1,12 +1,16 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
+
 import {
-  database,
+  getActiveDatabase,
+  isActiveDatabase,
   type DocumentRecord,
 } from '../../db/database'
+
 import {
   loadSemanticData,
   searchLoadedSemanticData,
 } from './semanticSearch'
+
 import {
   analyzeRelationship,
   type RelationshipAnalysis,
@@ -39,9 +43,6 @@ const MAX_GROQ_ANALYSES = 40
 /*
  * How often we yield control back to the
  * browser during semantic comparison.
- *
- * This prevents the page from becoming
- * completely unresponsive.
  */
 const YIELD_EVERY_CHUNKS = 5
 
@@ -82,8 +83,7 @@ function yieldToBrowser(): Promise<void> {
 }
 
 function getBookTitleParts(title: string) {
-  const separatorIndex =
-    title.indexOf(':')
+  const separatorIndex = title.indexOf(':')
 
   if (separatorIndex === -1) {
     return {
@@ -93,13 +93,8 @@ function getBookTitleParts(title: string) {
   }
 
   return {
-    title: title
-      .slice(0, separatorIndex)
-      .trim(),
-
-    subtitle: title
-      .slice(separatorIndex + 1)
-      .trim(),
+    title: title.slice(0, separatorIndex).trim(),
+    subtitle: title.slice(separatorIndex + 1).trim(),
   }
 }
 
@@ -108,8 +103,7 @@ function BookTitle({
 }: {
   title: string
 }) {
-  const parts =
-    getBookTitleParts(title)
+  const parts = getBookTitleParts(title)
 
   return (
     <div>
@@ -127,13 +121,17 @@ function BookTitle({
 }
 
 export default function EmbeddingTest() {
-  const [
-    selectedBookId,
-    setSelectedBookId,
-  ] = useState('')
+  /*
+   * Capture the database belonging to the
+   * currently active account.
+   */
+  const db = getActiveDatabase()
 
-const [books, setBooks] =
-  useState<DocumentRecord[]>([])
+  const [selectedBookId, setSelectedBookId] =
+    useState('')
+
+  const [books, setBooks] =
+    useState<DocumentRecord[]>([])
 
   const [loading, setLoading] =
     useState(false)
@@ -150,23 +148,83 @@ const [books, setBooks] =
   ] = useState<string | null>(null)
 
   /*
-   * Load books.
+   * Prevent updates after unmount.
+   */
+  const mountedRef = useRef(false)
+
+  /*
+   * Identify the latest comparison operation.
+   *
+   * This prevents an older asynchronous operation
+   * from updating the UI after a newer one starts.
+   */
+  const operationIdRef = useRef(0)
+
+  /*
+   * Check whether an asynchronous operation
+   * still belongs to this component and account.
+   */
+/*
+   * Load books from the current account.
    */
   useEffect(() => {
-    async function loadBooks() {
-      const documents =
-        await database.documents.toArray()
+    mountedRef.current = true
 
-      setBooks(documents)
+    let cancelled = false
+
+    async function loadBooks() {
+      try {
+        const documents = await db.documents.toArray()
+
+        if (
+          cancelled ||
+          !isActiveDatabase(db)
+        ) {
+          return
+        }
+
+        setBooks(documents)
+      } catch (error) {
+        if (
+          !cancelled &&
+          isActiveDatabase(db)
+        ) {
+          console.error(
+            'Failed to load books:',
+            error,
+          )
+        }
+      }
     }
 
     void loadBooks()
-  }, [])
+
+    return () => {
+      cancelled = true
+      mountedRef.current = false
+
+      /*
+       * Invalidate any comparison still running.
+       */
+      operationIdRef.current += 1
+    }
+  }, [db])
 
   async function compareBooks() {
-    if (!selectedBookId) {
+    if (!selectedBookId || loading) {
       return
     }
+
+    /*
+     * Capture the database and operation identity.
+     */
+    const operationDatabase = db
+    const operationId = ++operationIdRef.current
+
+    const isCurrent = () =>
+      mountedRef.current &&
+      operationIdRef.current === operationId &&
+      isActiveDatabase(operationDatabase)
 
     setLoading(true)
     setResults([])
@@ -178,14 +236,14 @@ const [books, setBooks] =
        * LOAD SELECTED BOOK
        * ==========================================
        */
-      setStatus(
-        'Loading selected book...',
-      )
+      setStatus('Loading selected book...')
 
       const selectedBook =
-        await database.documents.get(
+        await operationDatabase.documents.get(
           selectedBookId,
         )
+
+      if (!isCurrent()) return
 
       if (!selectedBook) {
         throw new Error(
@@ -199,14 +257,13 @@ const [books, setBooks] =
        * ==========================================
        */
       const allDocuments =
-        await database.documents.toArray()
+        await operationDatabase.documents.toArray()
 
-      const otherBooks =
-        allDocuments.filter(
-          document =>
-            document.id !==
-            selectedBookId,
-        )
+      if (!isCurrent()) return
+
+      const otherBooks = allDocuments.filter(
+        document => document.id !== selectedBookId,
+      )
 
       if (otherBooks.length === 0) {
         setStatus(
@@ -221,20 +278,15 @@ const [books, setBooks] =
        * LOAD EXISTING EMBEDDINGS
        * ==========================================
        *
-       * IMPORTANT:
-       *
-       * We DO NOT call generateEmbedding()
-       * during comparison anymore.
-       *
-       * The embeddings already stored in
-       * IndexedDB are reused.
+       * Reuse stored embeddings.
+       * No embedding model is generated here.
        */
-      setStatus(
-        'Loading stored embeddings...',
-      )
+      setStatus('Loading stored embeddings...')
 
       const semanticData =
-        await loadSemanticData()
+        await loadSemanticData(operationDatabase)
+
+      if (!isCurrent()) return
 
       /*
        * ==========================================
@@ -242,10 +294,12 @@ const [books, setBooks] =
        * ==========================================
        */
       const queryChunks =
-        await database.memoryChunks
+        await operationDatabase.memoryChunks
           .where('documentId')
           .equals(selectedBookId)
           .toArray()
+
+      if (!isCurrent()) return
 
       if (queryChunks.length === 0) {
         setStatus(
@@ -259,22 +313,11 @@ const [books, setBooks] =
        * ==========================================
        * CREATE EMBEDDING LOOKUP
        * ==========================================
-       *
-       * Embedding IDs are the same as chunk IDs.
-       *
-       * This lets us find the stored vector
-       * instantly instead of generating it again.
        */
       const embeddingByChunkId =
-        new Map<
-          string,
-          Float32Array
-        >()
+        new Map<string, Float32Array>()
 
-      for (
-        const embedding of
-        semanticData.embeddings
-      ) {
+      for (const embedding of semanticData.embeddings) {
         embeddingByChunkId.set(
           embedding.id,
           embedding.vector,
@@ -287,26 +330,16 @@ const [books, setBooks] =
        * ==========================================
        */
       const candidatesByBook =
-        new Map<
-          string,
-          CandidateRelationship[]
-        >()
+        new Map<string, CandidateRelationship[]>()
 
       for (const book of otherBooks) {
-        candidatesByBook.set(
-          book.id,
-          [],
-        )
+        candidatesByBook.set(book.id, [])
       }
 
       /*
        * ==========================================
        * LOCAL SEMANTIC SEARCH
        * ==========================================
-       *
-       * We reuse existing embeddings.
-       *
-       * No Transformers.js model is called here.
        */
       let chunksWithoutEmbeddings = 0
 
@@ -315,152 +348,86 @@ const [books, setBooks] =
         index < queryChunks.length;
         index += 1
       ) {
-        const queryChunk =
-          queryChunks[index]
+        if (!isCurrent()) return
 
-        /*
-         * Get the embedding already stored
-         * in IndexedDB.
-         */
+        const queryChunk = queryChunks[index]
+
         const queryEmbedding =
-          embeddingByChunkId.get(
-            queryChunk.id,
-          )
+          embeddingByChunkId.get(queryChunk.id)
 
-        /*
-         * This should normally never happen
-         * if indexing completed correctly.
-         */
         if (!queryEmbedding) {
           chunksWithoutEmbeddings += 1
           continue
         }
 
-        /*
-         * Only update the UI every few chunks.
-         *
-         * Updating React state for every chunk
-         * creates unnecessary work.
-         */
-        if (
-          index % YIELD_EVERY_CHUNKS ===
-          0
-        ) {
+        if (index % YIELD_EVERY_CHUNKS === 0) {
           setStatus(
             `Comparing passages ${index + 1}/${queryChunks.length}...`,
           )
 
-          /*
-           * Give the browser time to repaint
-           * and process clicks/events.
-           */
           await yieldToBrowser()
+
+          if (!isCurrent()) return
         }
 
         /*
-         * Search the already-loaded vectors.
+         * Search previously loaded vectors.
          */
         const matches =
           searchLoadedSemanticData(
             queryEmbedding,
             semanticData,
             {
-              /*
-               * Never compare the selected book
-               * against itself.
-               */
-              excludeDocumentId:
-                selectedBookId,
-
-              /*
-               * Retrieve several candidates.
-               */
-              limit:
-                CANDIDATES_PER_CHUNK,
-
-              /*
-               * Favor recall.
-               */
-              minSimilarity:
-                SEMANTIC_MIN_SIMILARITY,
+              excludeDocumentId: selectedBookId,
+              limit: CANDIDATES_PER_CHUNK,
+              minSimilarity: SEMANTIC_MIN_SIMILARITY,
             },
           )
 
-        /*
-         * Put matches into their respective
-         * comparison-book buckets.
-         */
         for (const match of matches) {
           const bucket =
-            candidatesByBook.get(
-              match.documentId,
-            )
+            candidatesByBook.get(match.documentId)
 
           if (!bucket) {
             continue
           }
 
-          /*
-           * Only remove an exact duplicate
-           * passage pair.
-           */
-          const duplicate =
-            bucket.some(
-              existing =>
-                existing.queryChunkId ===
-                  queryChunk.id &&
-                existing.matchedChunkId ===
-                  match.chunkId,
-            )
+          const duplicate = bucket.some(
+            existing =>
+              existing.queryChunkId === queryChunk.id &&
+              existing.matchedChunkId === match.chunkId,
+          )
 
           if (duplicate) {
             continue
           }
 
           bucket.push({
-            queryChunkId:
-              queryChunk.id,
-
-            matchedChunkId:
-              match.chunkId,
+            queryChunkId: queryChunk.id,
+            matchedChunkId: match.chunkId,
 
             query: {
-              documentId:
-                selectedBookId,
-
-              documentTitle:
-                selectedBook.title,
-
-              pageNumber:
-                queryChunk.pageNumber,
-
-              text:
-                queryChunk.text,
+              documentId: selectedBookId,
+              documentTitle: selectedBook.title,
+              pageNumber: queryChunk.pageNumber,
+              text: queryChunk.text,
             },
 
             matched: {
-              documentId:
-                match.documentId,
-
-              documentTitle:
-                match.documentTitle,
-
-              pageNumber:
-                match.pageNumber,
-
-              text:
-                match.text,
+              documentId: match.documentId,
+              documentTitle: match.documentTitle,
+              pageNumber: match.pageNumber,
+              text: match.text,
             },
 
-            similarity:
-              match.similarity,
+            similarity: match.similarity,
           })
         }
       }
 
-      if (
-        chunksWithoutEmbeddings > 0
-      ) {
+      if (!isCurrent()) return
+
+      if (chunksWithoutEmbeddings > 0) {
         console.warn(
           `[Comparison] ${chunksWithoutEmbeddings} chunks did not have stored embeddings.`,
         )
@@ -471,50 +438,30 @@ const [books, setBooks] =
        * LOCAL CANDIDATE SELECTION
        * ==========================================
        */
-      const localCandidates: CandidateRelationship[] =
-        []
+      const localCandidates: CandidateRelationship[] = []
 
       for (const book of otherBooks) {
         const bucket =
-          candidatesByBook.get(
-            book.id,
-          ) ?? []
+          candidatesByBook.get(book.id) ?? []
 
-        /*
-         * Highest semantic similarity first.
-         */
         bucket.sort(
-          (a, b) =>
-            b.similarity -
-            a.similarity,
+          (a, b) => b.similarity - a.similarity,
         )
 
-        /*
-         * Keep the strongest candidates
-         * for each individual book.
-         */
-        const selected =
-          bucket.slice(
-            0,
-            LOCAL_CANDIDATES_PER_BOOK,
-          )
-
-        localCandidates.push(
-          ...selected,
+        const selected = bucket.slice(
+          0,
+          LOCAL_CANDIDATES_PER_BOOK,
         )
+
+        localCandidates.push(...selected)
 
         console.log(
           `[Semantic Search] ${book.title}: ${selected.length} candidates`,
         )
       }
 
-      /*
-       * Sort all candidates by similarity.
-       */
       localCandidates.sort(
-        (a, b) =>
-          b.similarity -
-          a.similarity,
+        (a, b) => b.similarity - a.similarity,
       )
 
       console.log(
@@ -527,10 +474,7 @@ const [books, setBooks] =
        * ==========================================
        */
       const groqCandidates =
-        localCandidates.slice(
-          0,
-          MAX_GROQ_ANALYSES,
-        )
+        localCandidates.slice(0, MAX_GROQ_ANALYSES)
 
       console.log(
         `[Comparison] Sending ${groqCandidates.length} candidates to Groq`,
@@ -545,113 +489,75 @@ const [books, setBooks] =
        * GROQ RELATIONSHIP ANALYSIS
        * ==========================================
        */
-      const finalResults:
-        RelationshipResult[] =
-          []
+      const finalResults: RelationshipResult[] = []
 
       for (
         let index = 0;
         index < groqCandidates.length;
         index += 1
       ) {
-        const candidate =
-          groqCandidates[index]
+        if (!isCurrent()) return
+
+        const candidate = groqCandidates[index]
 
         setStatus(
           `AI relationship analysis ${index + 1}/${groqCandidates.length}...`,
         )
 
         try {
-          const analysis =
-            await analyzeRelationship({
-              queryBook:
-                candidate.query
-                  .documentTitle,
+          const analysis = await analyzeRelationship({
+            queryBook: candidate.query.documentTitle,
+            queryPage: candidate.query.pageNumber,
+            queryPassage: candidate.query.text,
 
-              queryPage:
-                candidate.query
-                  .pageNumber,
+            matchedBook: candidate.matched.documentTitle,
+            matchedPage: candidate.matched.pageNumber,
+            matchedPassage: candidate.matched.text,
 
-              queryPassage:
-                candidate.query.text,
-
-              matchedBook:
-                candidate.matched
-                  .documentTitle,
-
-              matchedPage:
-                candidate.matched
-                  .pageNumber,
-
-              matchedPassage:
-                candidate.matched
-                  .text,
-
-              similarity:
-                candidate.similarity,
-            })
+            similarity: candidate.similarity,
+          })
 
           /*
-           * Groq rejected the relationship.
+           * The account could have changed while
+           * the Groq request was running.
            */
+          if (!isCurrent()) return
+
           if (!analysis.meaningful) {
             continue
           }
 
-          /*
-           * Exact passage-pair deduplication.
-           */
-          const duplicate =
-            finalResults.some(
-              existing =>
-                existing.queryChunkId ===
-                  candidate.queryChunkId &&
-                existing.matchedChunkId ===
-                  candidate.matchedChunkId,
-            )
+          const duplicate = finalResults.some(
+            existing =>
+              existing.queryChunkId === candidate.queryChunkId &&
+              existing.matchedChunkId === candidate.matchedChunkId,
+          )
 
           if (duplicate) {
             continue
           }
 
-          const relationship: RelationshipResult =
-            {
-              ...candidate,
-              analysis,
-            }
+          finalResults.push({
+            ...candidate,
+            analysis,
+          })
 
-          finalResults.push(
-            relationship,
-          )
+          setResults([...finalResults])
 
-          /*
-           * Display the new relationship
-           * immediately.
-           */
-          setResults([
-            ...finalResults,
-          ])
-
-          /*
-           * Give the browser time to render
-           * the new bubble.
-           */
           await yieldToBrowser()
+
+          if (!isCurrent()) return
         } catch (error) {
+          if (!isCurrent()) return
+
           console.error(
             'Relationship analysis failed:',
             error,
           )
 
-          /*
-           * Stop gracefully if Groq rate
-           * limiting occurs.
-           */
           if (
             error instanceof Error &&
-            error.message.includes(
-              '429',
-            )
+            error.message.includes('429')
           ) {
             setStatus(
               'Groq rate limit reached. AI analysis stopped.',
@@ -662,21 +568,18 @@ const [books, setBooks] =
         }
       }
 
+      if (!isCurrent()) return
+
       /*
        * ==========================================
        * FINAL RESULTS
        * ==========================================
        */
-      const sortedResults =
-        [...finalResults].sort(
-          (a, b) =>
-            b.similarity -
-            a.similarity,
-        )
-
-      setResults(
-        sortedResults,
+      const sortedResults = [...finalResults].sort(
+        (a, b) => b.similarity - a.similarity,
       )
+
+      setResults(sortedResults)
 
       if (sortedResults.length > 0) {
         setStatus(
@@ -688,6 +591,8 @@ const [books, setBooks] =
         )
       }
     } catch (error) {
+      if (!isCurrent()) return
+
       console.error(
         'Book comparison failed:',
         error,
@@ -699,7 +604,13 @@ const [books, setBooks] =
           : 'Book comparison failed.',
       )
     } finally {
-      setLoading(false)
+      /*
+       * An old operation must never change the
+       * loading state of a newer operation.
+       */
+      if (isCurrent()) {
+        setLoading(false)
+      }
     }
   }
 
@@ -835,7 +746,7 @@ const [books, setBooks] =
                       </span>
 
                       <span className="text-gray-400">
-                        ↔
+                        â†”
                       </span>
 
                       <span className="rounded-full border px-3 py-1 text-xs">
@@ -919,7 +830,7 @@ const [books, setBooks] =
                   {/* Expand icon */}
                   <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-lg">
                     {expanded
-                      ? '−'
+                      ? 'âˆ’'
                       : '+'}
                   </div>
                 </div>
@@ -934,7 +845,7 @@ const [books, setBooks] =
                     {/* BOOK A */}
                     <div className="rounded-xl border p-4">
                       <div className="mb-3 text-xs font-medium uppercase text-gray-500">
-                        Book A · Page{' '}
+                        Book A Â· Page{' '}
                         {
                           result.query
                             .pageNumber
@@ -959,7 +870,7 @@ const [books, setBooks] =
                     {/* BOOK B */}
                     <div className="rounded-xl border p-4">
                       <div className="mb-3 text-xs font-medium uppercase text-gray-500">
-                        Book B · Page{' '}
+                        Book B Â· Page{' '}
                         {
                           result.matched
                             .pageNumber
@@ -1114,4 +1025,6 @@ const [books, setBooks] =
     </div>
   )
 }
+
+
 

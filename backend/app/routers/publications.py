@@ -6,7 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user
+from app.core.auth import (
+    get_current_user,
+    get_optional_current_user,
+)
 from app.db.session import get_db
 from app.models import Book, Post, Profile, User
 from app.moderation.copyright import check_copyright
@@ -237,10 +240,13 @@ def publish_community_note(
     }
 
 
+
 @router.get("/community")
 def get_community_notes(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(
+        get_optional_current_user
+    ),
 ):
     rows = db.execute(
         select(Post, Book, Profile)
@@ -256,7 +262,7 @@ def get_community_notes(
             post,
             book,
             profile,
-            current_user.id,
+            current_user,
         )
         for post, book, profile in rows
     ]
